@@ -1,0 +1,14 @@
+# Build stage for backend
+FROM golang:1.21-alpine AS backend-builder
+RUN apk add --no-cache git make
+WORKDIR /app
+COPY backend/ .
+RUN rm -f go.sum && go build -mod=mod -o main .
+
+# Runtime stage for backend
+FROM alpine:3.18
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=backend-builder /app/main .
+EXPOSE 8080
+CMD ["./main"]

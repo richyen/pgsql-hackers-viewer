@@ -1,0 +1,54 @@
+.container {
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.container h2 {
+  margin-bottom: 16px;
+  color: #1f2937;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message {
+  padding: 12px;
+  border-left: 3px solid #3b82f6;
+  background-color: #f0f9ff;
+  border-radius: 4px;
+}
+
+.messageHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.messageHeader h4 {
+  margin: 0 0 4px 0;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.author {
+  margin: 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.date {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.empty {
+  color: #6b7280;
+  text-align: center;
+  padding: 32px 16px;
+}

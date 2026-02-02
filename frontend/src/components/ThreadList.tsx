@@ -1,0 +1,66 @@
+import React, { useState, useEffect } from 'react';
+import { Thread } from '../api/client';
+import styles from './ThreadList.module.css';
+
+interface ThreadListProps {
+  threads: Thread[];
+  onSelectThread: (thread: Thread) => void;
+  selectedStatus?: string;
+}
+
+export const ThreadList: React.FC<ThreadListProps> = ({
+  threads,
+  onSelectThread,
+  selectedStatus,
+}) => {
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'in-progress':
+        return '#10b981';
+      case 'discussion':
+        return '#3b82f6';
+      case 'stalled':
+        return '#f59e0b';
+      case 'abandoned':
+        return '#ef4444';
+      default:
+        return '#6b7280';
+    }
+  };
+
+  return (
+    <div className={styles.container}>
+      <h2>Threads</h2>
+      {threads.length === 0 ? (
+        <p className={styles.empty}>No threads found</p>
+      ) : (
+        <ul className={styles.list}>
+          {threads.map((thread) => (
+            <li
+              key={thread.id}
+              className={styles.item}
+              onClick={() => onSelectThread(thread)}
+            >
+              <div className={styles.header}>
+                <h3>{thread.subject}</h3>
+                <span
+                  className={styles.badge}
+                  style={{ backgroundColor: getStatusColor(thread.status) }}
+                >
+                  {thread.status}
+                </span>
+              </div>
+              <div className={styles.meta}>
+                <span>{thread.message_count} messages</span>
+                <span>{thread.unique_authors} authors</span>
+                <span>
+                  Updated: {new Date(thread.last_message_at).toLocaleDateString()}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};

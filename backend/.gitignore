@@ -1,0 +1,15 @@
+*.o
+*.a
+*.so
+__pycache__
+*.pyc
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.env
+build/
+dist/
+vendor/

@@ -1,0 +1,16 @@
+github.com/emersion/go-imap v1.2.1 h1:+s9gRDxqvvn7qKKhXM1pYbYzgkk5lCPnfxPRfDPMYI=
+github.com/emersion/go-imap v1.2.1/go.mod h1:l7VWQZJDj+eYsXJl7cKWlTXGY6qx9d1S8hPSDV8bHU=
+github.com/emersion/go-message v0.17.0 h1:pVau5v4/8OPkgLBCsU2Yc7pGxvXAa9LkT3xrhjQkBg=
+github.com/emersion/go-message v0.17.0/go.mod h1:xqv0x3LGwMplMrV1fJG7rGmKDnJu46pNHcSZvqJwvM=
+github.com/emersion/go-sasl v0.0.0-20220912192821-cb007c99c33d h1:mUaCKVLlDsDKJ7KjzTlXNLVWW8tVA+Qkz5l+0pVlwE=
+github.com/emersion/go-sasl v0.0.0-20220912192821-cb007c99c33d/go.mod h1:BmF4Z6MyRZJEWxpPmzqqrQ0vgkyjbPtQfV4HenruJI=
+github.com/emersion/go-textwrapper v0.0.0-20200606154912-b86b3b647eba h1:BOIbKk2YgpLAeS7tKxiEk1GHZLJ2P+L5pAa1f6w/rA=
+github.com/emersion/go-textwrapper v0.0.0-20200606154912-b86b3b647eba/go.mod h1:QW1B7P34Hir/WdkGjfEh/YVEWXYbNV7MJbgrtC6Rys=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGkdin/v0FSj9UIAcD/+/4=
+github.com/gorilla/mux v1.8.1 h1:TuBL49tXwgrFYWhqrNgrUNEY92u81SPhu7sTdzQEiWY=
+github.com/gorilla/mux v1.8.1/go.mod h1:AKf9I1AEBtxzsxyhShnJ7md6SUREWKwFfuO7T3G6mE=
+github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
+github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkxj2f9MS5AkWQ=
+github.com/lib/pq v1.10.9 h1:YXG7RB+JIjhP29X+OtkiDnYaXQsRKVTuxLvAMJ6Pw4=
+github.com/lib/pq v1.10.9/go.mod h1:AlVN5x4E4T635y0O/+R/aqcTsRqeIl/xz0IzBn5jHg=
