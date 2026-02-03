@@ -294,9 +294,9 @@ function App() {
     <div className={styles.app}>
       <header className={styles.header}>
         <div>
-          <h1>PostgreSQL Mailing List Thread Analyzer</h1>
+          <h1>💓 pgPulse</h1>
           <p>
-            Identify which pgsql-hackers threads are actively being worked on
+            The heartbeat of pgsql-hackers threads
           </p>
         </div>
         <button 

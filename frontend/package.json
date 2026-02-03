@@ -1,5 +1,5 @@
 {
-  "name": "pgsql-analyzer-frontend",
+  "name": "pgpulse-frontend",
   "version": "0.1.0",
   "private": true,
   "dependencies": {

@@ -1,7 +1,7 @@
 services:
   # Backend API
   - type: web
-    name: pgsql-analyzer-backend
+    name: pgpulse-backend
     runtime: docker
     dockerfilePath: ./Dockerfile.backend
     dockerContext: .
@@ -33,7 +33,7 @@ services:
 
   # Frontend
   - type: web
-    name: pgsql-analyzer-frontend
+    name: pgpulse-frontend
     runtime: docker
     dockerfilePath: ./Dockerfile.frontend
     dockerContext: .
@@ -42,10 +42,10 @@ services:
     region: oregon
     envVars:
       - key: REACT_APP_API_URL
-        value: https://pgsql-analyzer-backend.onrender.com
+        value: https://pgpulse-backend.onrender.com
 
 databases:
-  - name: pgsql-db
-    databaseName: pgsql_analyzer
+  - name: pgpulse-db
+    databaseName: pgpulse
     plan: free
     region: oregon
