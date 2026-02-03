@@ -77,9 +77,14 @@ func getThreadsHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 
 		status := r.URL.Query().Get("status")
+		search := r.URL.Query().Get("search")
 		limit := r.URL.Query().Get("limit")
+		offset := r.URL.Query().Get("offset")
 		if limit == "" {
 			limit = "50"
+		}
+		if offset == "" {
+			offset = "0"
 		}
 
 		query := `
@@ -99,8 +104,18 @@ func getThreadsHandler(db *sql.DB) http.HandlerFunc {
 			argCount++
 		}
 
+		if search != "" {
+			query += " AND LOWER(subject) LIKE LOWER($" + fmt.Sprintf("%d", argCount) + ")"
+			args = append(args, "%"+search+"%")
+			argCount++
+		}
+
 		query += " ORDER BY last_message_at DESC LIMIT $" + fmt.Sprintf("%d", argCount)
 		args = append(args, limit)
+		argCount++
+		
+		query += " OFFSET $" + fmt.Sprintf("%d", argCount)
+		args = append(args, offset)
 
 		rows, err := db.Query(query, args...)
 		if err != nil {
@@ -111,7 +126,7 @@ func getThreadsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		defer rows.Close()
 
-		var threads []*models.Thread
+		threads := make([]*models.Thread, 0)
 		for rows.Next() {
 			thread := &models.Thread{}
 			var lastMsgAt sql.NullTime
@@ -260,7 +275,7 @@ func getStatsHandler(db *sql.DB) http.HandlerFunc {
 		stats["total_threads"] = totalThreads
 
 		// Threads by status
-		statuses := []string{"in-progress", "discussion", "stalled", "abandoned"}
+		statuses := []string{"in-progress", "has-patch", "stalled-patch", "discussion", "stalled", "abandoned"}
 		statusCounts := make(map[string]int)
 		for _, status := range statuses {
 			var count int
@@ -294,11 +309,131 @@ func getSyncProgressHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func groupByThread(messages []*models.Message) map[string][]*models.Message {
-	threads := make(map[string][]*models.Message)
+	// RFC 5256 THREAD=REFERENCES implementation
+	// Build a map of message-id to message for quick lookups
+	messageMap := make(map[string]*models.Message)
 	for _, msg := range messages {
-		threads[msg.Subject] = append(threads[msg.Subject], msg)
+		messageMap[msg.MessageID] = msg
 	}
-	return threads
+
+	// messageToRoot maps each message-id to its thread root
+	messageToRoot := make(map[string]string)
+
+	// First, build the thread structure using References and In-Reply-To
+	for _, msg := range messages {
+		root := findThreadRootRFC5256(msg, messageMap, messageToRoot)
+		messageToRoot[msg.MessageID] = root
+	}
+
+	// Group messages by their root
+	threadMap := make(map[string][]*models.Message)
+	for _, msg := range messages {
+		root := messageToRoot[msg.MessageID]
+		threadMap[root] = append(threadMap[root], msg)
+	}
+
+	return threadMap
+}
+
+// findThreadRootRFC5256 implements RFC 5256 threading algorithm
+func findThreadRootRFC5256(msg *models.Message, messageMap map[string]*models.Message, messageToRoot map[string]string) string {
+	// Extract all references from the References header
+	refs := parseReferences(msg.RefersTo)
+
+	// Add In-Reply-To to the reference chain if it exists
+	if msg.InReplyTo != "" {
+		// In-Reply-To should be the last reference
+		refs = append(refs, msg.InReplyTo)
+	}
+
+	// If no references, this message is a root
+	if len(refs) == 0 {
+		return msg.MessageID
+	}
+
+	// Find the oldest message in the reference chain that we have
+	// or use the first reference as the root
+	for _, refID := range refs {
+		// Clean up the reference ID
+		refID = strings.Trim(strings.TrimSpace(refID), "<>")
+		if refID == "" {
+			continue
+		}
+
+		// Check if we already know the root for this reference
+		if root, exists := messageToRoot[refID]; exists {
+			return root
+		}
+
+		// Check if this reference exists in our message set
+		if refMsg, exists := messageMap[refID]; exists {
+			// Recursively find the root of this reference
+			root := findThreadRootRFC5256(refMsg, messageMap, messageToRoot)
+			messageToRoot[refID] = root
+			return root
+		}
+
+		// Reference doesn't exist in our set, use the first reference as root
+		// This handles missing intermediate messages
+		return refID
+	}
+
+	// Fallback: use the message itself as root
+	return msg.MessageID
+}
+
+// parseReferences extracts individual message IDs from a References header
+// References can contain multiple message IDs separated by whitespace
+func parseReferences(references string) []string {
+	if references == "" {
+		return nil
+	}
+
+	var refs []string
+	// References can be space-separated or on multiple lines
+	// Message IDs are typically in angle brackets: <id@domain>
+
+	// Find all message IDs in angle brackets
+	inBracket := false
+	var currentRef strings.Builder
+
+	for _, ch := range references {
+		if ch == '<' {
+			inBracket = true
+			currentRef.Reset()
+		} else if ch == '>' && inBracket {
+			inBracket = false
+			if currentRef.Len() > 0 {
+				refs = append(refs, currentRef.String())
+			}
+		} else if inBracket {
+			currentRef.WriteRune(ch)
+		}
+	}
+
+	// If no angle brackets found, try splitting by whitespace
+	if len(refs) == 0 && references != "" {
+		parts := strings.Fields(references)
+		for _, part := range parts {
+			part = strings.Trim(part, "<>")
+			if part != "" && strings.Contains(part, "@") {
+				refs = append(refs, part)
+			}
+		}
+	}
+
+	return refs
+}
+
+// sortMessagesByTime sorts messages by creation time (earliest first)
+func sortMessagesByTime(msgs []*models.Message) {
+	for i := 0; i < len(msgs)-1; i++ {
+		for j := i + 1; j < len(msgs); j++ {
+			if msgs[i].CreatedAt.After(msgs[j].CreatedAt) {
+				msgs[i], msgs[j] = msgs[j], msgs[i]
+			}
+		}
+	}
 }
 
 func uploadMboxHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
@@ -533,28 +668,53 @@ func sanitizeUTF8(s string) string {
 	return b.String()
 }
 
-// storeMessagesInDB groups messages by subject, merges into existing threads by subject when present,
-// and returns the number of messages newly inserted (excluding conflicts).
+// storeMessagesInDB groups messages by thread using In-Reply-To/References headers,
+// merges into existing threads by message-id when present, and returns the number of messages newly inserted.
 func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 	threads := groupByThread(messages)
 	threadAnalyzer := analyzer.NewThreadAnalyzer(db)
 	var inserted int
-	for subject, msgs := range threads {
+
+	for rootMessageID, msgs := range threads {
+		if len(msgs) == 0 {
+			continue
+		}
+
+		// Sort messages by creation time to ensure root message is first
+		sortMessagesByTime(msgs)
 		firstMsg := msgs[0]
+
 		var threadID string
-		// Reuse existing thread with same subject (for incremental sync)
+
+		// Try to find existing thread by the root message-id
 		err := db.QueryRow(`
-			SELECT id FROM threads WHERE subject = $1 ORDER BY created_at ASC LIMIT 1
-		`, subject).Scan(&threadID)
-		if err != nil {
-			if err != sql.ErrNoRows {
-				log.Printf("Error looking up thread by subject: %v", err)
-				continue
+			SELECT id FROM threads WHERE first_message_id = $1 LIMIT 1
+		`, rootMessageID).Scan(&threadID)
+
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("Error looking up thread by message-id: %v", err)
+			continue
+		}
+
+		// If thread doesn't exist by root message-id, check if any message in this thread
+		// already exists and get its thread_id (handles missing intermediate messages)
+		if err == sql.ErrNoRows {
+			for _, msg := range msgs {
+				err = db.QueryRow(`
+					SELECT thread_id FROM messages WHERE message_id = $1 LIMIT 1
+				`, msg.MessageID).Scan(&threadID)
+				if err == nil {
+					// Found an existing message, use its thread
+					break
+				}
 			}
+		}
+
+		// If still no thread found, create a new one
+		if threadID == "" {
 			threadID = uuid.New().String()
-			// Sanitize thread fields
-			sanitizedSubject := sanitizeUTF8(subject)
-			sanitizedMessageID := sanitizeUTF8(firstMsg.MessageID)
+			sanitizedSubject := sanitizeUTF8(firstMsg.Subject)
+			sanitizedMessageID := sanitizeUTF8(rootMessageID)
 			sanitizedAuthor := sanitizeUTF8(firstMsg.Author)
 			sanitizedAuthorEmail := sanitizeUTF8(firstMsg.AuthorEmail)
 
@@ -579,12 +739,14 @@ func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 			msg.AuthorEmail = sanitizeUTF8(msg.AuthorEmail)
 			msg.Body = sanitizeUTF8(msg.Body)
 			msg.MessageID = sanitizeUTF8(msg.MessageID)
+			msg.InReplyTo = sanitizeUTF8(msg.InReplyTo)
+			msg.RefersTo = sanitizeUTF8(msg.RefersTo)
 
 			result, err := db.Exec(`
-				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, body, created_at, has_patch, patch_status, commitfest_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-				ON CONFLICT (message_id) DO UPDATE SET thread_id = EXCLUDED.thread_id, has_patch = EXCLUDED.has_patch, patch_status = EXCLUDED.patch_status, commitfest_id = EXCLUDED.commitfest_id
-			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.Body, msg.CreatedAt, msg.HasPatch, msg.PatchStatus, msg.CommitFestID)
+				INSERT INTO messages (id, thread_id, message_id, in_reply_to, refers_to, subject, author, author_email, body, created_at, has_patch, patch_status, commitfest_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+				ON CONFLICT (message_id) DO UPDATE SET thread_id = EXCLUDED.thread_id, in_reply_to = EXCLUDED.in_reply_to, refers_to = EXCLUDED.refers_to, has_patch = EXCLUDED.has_patch, patch_status = EXCLUDED.patch_status, commitfest_id = EXCLUDED.commitfest_id
+			`, msg.ID, msg.ThreadID, msg.MessageID, msg.InReplyTo, msg.RefersTo, msg.Subject, msg.Author, msg.AuthorEmail, msg.Body, msg.CreatedAt, msg.HasPatch, msg.PatchStatus, msg.CommitFestID)
 			if err != nil {
 				log.Printf("Error inserting message: %v", err)
 				continue

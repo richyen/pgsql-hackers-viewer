@@ -28,6 +28,29 @@ func NewMboxParser(dataDir string) *MboxParser {
 	}
 }
 
+// processHeader applies a parsed header to the message
+func processHeader(msg *models.Message, header, value string, contentTransferEncoding *string) {
+	switch header {
+	case "message-id":
+		// Clean up message-id by removing angle brackets and whitespace
+		msg.MessageID = strings.Trim(strings.TrimSpace(value), "<>")
+	case "in-reply-to":
+		// Clean up in-reply-to by removing angle brackets and whitespace
+		msg.InReplyTo = strings.Trim(strings.TrimSpace(value), "<>")
+	case "references":
+		// Store references as-is (will be parsed by parseReferences in threading code)
+		msg.RefersTo = value
+	case "subject":
+		msg.Subject = normalizeSubject(value)
+	case "from":
+		msg.Author, msg.AuthorEmail = parseFromHeader(value)
+	case "date":
+		msg.CreatedAt = parseDate(value)
+	case "content-transfer-encoding":
+		*contentTransferEncoding = strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
 // ParseMboxFile parses a single mbox file
 func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) {
 	file, err := os.Open(filePath)
@@ -41,6 +64,8 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 	var messageBody strings.Builder
 	var contentTransferEncoding string
 	inBody := false // Track if we've finished headers and are in body
+	var lastHeader string
+	var lastValue string
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -48,6 +73,11 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 		// Check for start of new message (mbox format: "From " at line start)
 		if strings.HasPrefix(line, "From ") {
+			// Save any pending header
+			if lastHeader != "" && currentMessage != nil {
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+			}
+
 			// Save previous message if it exists
 			if currentMessage != nil {
 				currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding)
@@ -59,6 +89,8 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 			messageBody.Reset()
 			contentTransferEncoding = ""
 			inBody = false
+			lastHeader = ""
+			lastValue = ""
 			continue
 		}
 
@@ -68,29 +100,33 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 		// Blank line separates headers from body
 		if !inBody && strings.TrimSpace(line) == "" {
+			// Process any pending header before switching to body
+			if lastHeader != "" {
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+				lastHeader = ""
+				lastValue = ""
+			}
 			inBody = true
 			continue
 		}
 
 		// Parse email headers (before blank line)
-		if !inBody && strings.Contains(line, ": ") {
-			parts := strings.SplitN(line, ": ", 2)
-			if len(parts) == 2 {
-				header := strings.TrimSpace(parts[0])
-				value := strings.TrimSpace(parts[1])
+		if !inBody {
+			// Check if this is a header continuation line (starts with whitespace)
+			if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+				// Continuation of previous header
+				lastValue += " " + strings.TrimSpace(line)
+			} else if strings.Contains(line, ": ") {
+				// New header - process previous one first
+				if lastHeader != "" {
+					processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+				}
 
-				switch strings.ToLower(header) {
-				case "message-id":
-					// Clean up message-id by removing angle brackets
-					currentMessage.MessageID = strings.Trim(value, "<>")
-				case "subject":
-					currentMessage.Subject = normalizeSubject(value)
-				case "from":
-					currentMessage.Author, currentMessage.AuthorEmail = parseFromHeader(value)
-				case "date":
-					currentMessage.CreatedAt = parseDate(value)
-				case "content-transfer-encoding":
-					contentTransferEncoding = strings.ToLower(strings.TrimSpace(value))
+				// Parse new header
+				parts := strings.SplitN(line, ": ", 2)
+				if len(parts) == 2 {
+					lastHeader = strings.ToLower(strings.TrimSpace(parts[0]))
+					lastValue = strings.TrimSpace(parts[1])
 				}
 			}
 		} else if inBody {
@@ -210,7 +246,9 @@ func parseDate(dateStr string) time.Time {
 		time.RFC1123Z,
 		time.RFC1123,
 		"Mon, 02 Jan 2006 15:04:05 -0700",
+		"Mon, 2 Jan 2006 15:04:05 -0700", // Single-digit day
 		"02 Jan 2006 15:04:05 -0700",
+		"2 Jan 2006 15:04:05 -0700", // Single-digit day without day name
 	}
 
 	for _, format := range formats {

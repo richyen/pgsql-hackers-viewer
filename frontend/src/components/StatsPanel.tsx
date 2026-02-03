@@ -39,6 +39,8 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
 
   const statusColors: { [key: string]: string } = {
     'in-progress': '#10b981',
+    'has-patch': '#8b5cf6',
+    'stalled-patch': '#ec4899',
     discussion: '#3b82f6',
     stalled: '#f59e0b',
     abandoned: '#ef4444',

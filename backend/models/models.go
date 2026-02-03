@@ -16,7 +16,7 @@ type Thread struct {
 	LastMessageAt    *time.Time `json:"last_message_at,omitempty"`
 	MessageCount     int        `json:"message_count"`
 	UniqueAuthors    int        `json:"unique_authors"`
-	Status           string     `json:"status"` // in-progress, discussion, stalled, abandoned
+	Status           string     `json:"status"` // in-progress, has-patch, stalled-patch, discussion, stalled, abandoned
 }
 
 // Message represents an email message in a thread
@@ -24,6 +24,8 @@ type Message struct {
 	ID           string    `json:"id"`
 	ThreadID     string    `json:"thread_id"`
 	MessageID    string    `json:"message_id"`
+	InReplyTo    string    `json:"in_reply_to,omitempty"`
+	RefersTo     string    `json:"refers_to,omitempty"`
 	Subject      string    `json:"subject"`
 	Author       string    `json:"author"`
 	AuthorEmail  string    `json:"author_email"`

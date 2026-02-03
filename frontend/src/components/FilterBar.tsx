@@ -16,6 +16,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 }) => {
   const statuses = [
     { value: 'in-progress', label: 'In Progress', tooltip: 'Threads with patches and active review activity', color: '#10b981' },
+    { value: 'has-patch', label: 'Has Patch', tooltip: 'Threads with patches but not yet actively reviewed', color: '#8b5cf6' },
+    { value: 'stalled-patch', label: 'Stalled Patch', tooltip: 'Patches without acceptance/review for 14+ days', color: '#ec4899' },
     { value: 'discussion', label: 'Discussion', tooltip: 'Active threads without development work yet', color: '#3b82f6' },
     { value: 'stalled', label: 'Stalled', tooltip: 'No activity for 7-30 days', color: '#f59e0b' },
     { value: 'abandoned', label: 'Abandoned', tooltip: 'No activity for 30+ days', color: '#ef4444' },

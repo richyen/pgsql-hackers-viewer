@@ -20,6 +20,10 @@ function App() {
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const THREADS_PER_PAGE = 50;
 
   // Handle URL parameters for deep-linking
   useEffect(() => {
@@ -107,9 +111,13 @@ function App() {
   useEffect(() => {
     const fetchThreads = async () => {
       setIsLoading(true);
+      setOffset(0);
+      setHasMore(true);
       try {
-        const response = await threadAPI.getThreads(selectedStatus);
-        setAllThreads(response.data || []);
+        const response = await threadAPI.getThreads(selectedStatus, THREADS_PER_PAGE, 0);
+        const fetchedThreads = response.data || [];
+        setAllThreads(fetchedThreads);
+        setHasMore(fetchedThreads.length === THREADS_PER_PAGE);
         // Don't clear selectedThread if we're loading from URL params
         const params = new URLSearchParams(window.location.search);
         const threadIdFromUrl = params.get('thread');
@@ -127,17 +135,79 @@ function App() {
     fetchThreads();
   }, [selectedStatus]);
 
+  // Load more threads
+  const loadMoreThreads = async () => {
+    if (isLoadingMore || !hasMore || searchTerm.trim()) {
+      return; // Don't load more when filtering by search
+    }
+
+    setIsLoadingMore(true);
+    try {
+      const newOffset = offset + THREADS_PER_PAGE;
+      const response = await threadAPI.getThreads(selectedStatus, THREADS_PER_PAGE, newOffset);
+      const fetchedThreads = response.data || [];
+      
+      if (fetchedThreads.length > 0) {
+        setAllThreads(prev => [...prev, ...fetchedThreads]);
+        setOffset(newOffset);
+        setHasMore(fetchedThreads.length === THREADS_PER_PAGE);
+      } else {
+        setHasMore(false);
+      }
+    } catch (error) {
+      console.error('Error loading more threads:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   // Filter threads by search term
   useEffect(() => {
-    if (!searchTerm.trim()) {
-      setThreads(allThreads);
-    } else {
+    const performSearch = async () => {
+      if (!searchTerm.trim()) {
+        setThreads(allThreads);
+        return;
+      }
+
+      // First, try client-side filtering
       const filtered = allThreads.filter(thread =>
         thread.subject.toLowerCase().includes(searchTerm.toLowerCase())
       );
-      setThreads(filtered);
-    }
-  }, [searchTerm, allThreads]);
+
+      if (filtered.length > 0) {
+        setThreads(filtered);
+      } else {
+        // No results from loaded threads, search database
+        setIsLoading(true);
+        try {
+          const response = await threadAPI.getThreads(selectedStatus, 100, 0, searchTerm);
+          const dbResults = response.data || [];
+          
+          if (dbResults.length > 0) {
+            // Prepend database results to existing threads (avoiding duplicates)
+            const existingIds = new Set(allThreads.map(t => t.id));
+            const newThreads = dbResults.filter(t => !existingIds.has(t.id));
+            
+            if (newThreads.length > 0) {
+              setAllThreads(prev => [...newThreads, ...prev]);
+              setThreads(dbResults);
+            } else {
+              setThreads(dbResults);
+            }
+          } else {
+            setThreads([]);
+          }
+        } catch (error) {
+          console.error('Error searching database:', error);
+          setThreads([]);
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    performSearch();
+  }, [searchTerm, allThreads, selectedStatus]);
 
   // Fetch messages when thread is selected
   useEffect(() => {
@@ -231,7 +301,10 @@ function App() {
         <button 
           className={styles.helpButton}
           onClick={() => setIsHelpOpen(true)}
-          title="View help and classification guide"
+          ti  onLoadMore={loadMoreThreads}
+              hasMore={hasMore && !searchTerm.trim()}
+              isLoadingMore={isLoadingMore}
+            tle="View help and classification guide"
         >
           ? Help
         </button>

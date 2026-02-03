@@ -54,9 +54,9 @@ export interface SyncProgress {
 }
 
 export const threadAPI = {
-  getThreads: (status?: string, limit?: number) =>
+  getThreads: (status?: string, limit?: number, offset?: number, search?: string) =>
     api.get<Thread[]>('/threads', {
-      params: { status, limit: limit || 500 }, // Increased default limit for better search
+      params: { status, limit: limit || 50, offset: offset || 0, search },
     }),
 
   getThread: (id: string) =>

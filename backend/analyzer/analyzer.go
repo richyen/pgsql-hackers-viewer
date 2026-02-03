@@ -47,8 +47,19 @@ func (ta *ThreadAnalyzer) ClassifyThread(threadID string) (string, error) {
 	}
 
 	// Classification logic
+	// If thread has patch but hasn't been accepted/reviewed in 14+ days, mark as stalled-patch
+	if hasPatch && daysSince > 14 && !hasReview {
+		return "stalled-patch", nil
+	}
+
+	// Active patch with review activity
 	if hasPatch && (hasReview || messageCount > 3) {
 		return "in-progress", nil
+	}
+
+	// Has patch (regardless of review status)
+	if hasPatch {
+		return "has-patch", nil
 	}
 
 	if daysSince > 30 && messageCount < 5 {
