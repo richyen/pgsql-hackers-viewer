@@ -49,11 +49,16 @@ func RunMigrations(db *sql.DB) error {
 		id VARCHAR(255) PRIMARY KEY,
 		thread_id VARCHAR(255) NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
 		message_id VARCHAR(255) NOT NULL UNIQUE,
+		in_reply_to VARCHAR(255) DEFAULT '',
+		refers_to TEXT DEFAULT '',
 		subject TEXT NOT NULL,
 		author VARCHAR(255) NOT NULL,
 		author_email VARCHAR(255) NOT NULL,
 		body TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		has_patch BOOLEAN DEFAULT FALSE,
+		patch_status VARCHAR(50) DEFAULT '',
+		commitfest_id VARCHAR(50) DEFAULT '',
 		FOREIGN KEY (thread_id) REFERENCES threads(id)
 	);
 
@@ -72,6 +77,8 @@ func RunMigrations(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id);
 	CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+	CREATE INDEX IF NOT EXISTS idx_messages_has_patch ON messages(has_patch);
+	CREATE INDEX IF NOT EXISTS idx_messages_in_reply_to ON messages(in_reply_to);
 	CREATE INDEX IF NOT EXISTS idx_threads_status ON threads(status);
 	CREATE INDEX IF NOT EXISTS idx_threads_last_message ON threads(last_message_at);
 	`

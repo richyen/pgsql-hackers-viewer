@@ -10,6 +10,44 @@
   color: #1f2937;
 }
 
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.header h2 {
+  margin: 0;
+}
+
+.patchInfo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.patchCount {
+  font-size: 14px;
+  color: #059669;
+  font-weight: 600;
+}
+
+.jumpButton {
+  background: #10b981;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.jumpButton:hover {
+  background: #059669;
+}
+
 .messages {
   display: flex;
   flex-direction: column;
@@ -21,12 +59,52 @@
   border-left: 3px solid #3b82f6;
   background-color: #f0f9ff;
   border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.message.hasPatch {
+  border-left-color: #10b981;
+  background-color: #f0fdf4;
+}
+
+.message.highlighted {
+  border-left-width: 5px;
+  border-left-color: #f59e0b;
+  background-color: #fef3c7;
+  box-shadow: 0 4px 6px rgba(245, 158, 11, 0.3);
 }
 
 .messageHeader {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+.headerLeft {
+  flex: 1;
+}
+
+.headerRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.linkButton {
+  font-size: 11px;
+  color: #8b5cf6;
+  background: transparent;
+  border: 1px solid #8b5cf6;
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.linkButton:hover {
+  background: #8b5cf6;
+  color: white;
 }
 
 .messageHeader h4 {
@@ -39,12 +117,126 @@
   margin: 0;
   color: #6b7280;
   font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.opBadge {
+  display: inline-block;
+  background: #10b981;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.patchBadge {
+  display: inline-block;
+  background: #059669;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.statusBadge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.statusProposed {
+  background: #60a5fa;
+  color: white;
+}
+
+.statusAccepted {
+  background: #34d399;
+  color: white;
+}
+
+.statusCommitted {
+  background: #10b981;
+  color: white;
+}
+
+.statusRejected {
+  background: #f87171;
+  color: white;
+}
+
+.commitfestBadge {
+  display: inline-block;
+  background: #8b5cf6;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
 }
 
 .date {
   font-size: 12px;
   color: #6b7280;
   white-space: nowrap;
+}
+
+.archiveLink {
+  font-size: 11px;
+  color: #3b82f6;
+  text-decoration: none;
+  padding: 2px 6px;
+  border: 1px solid #3b82f6;
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+
+.archiveLink:hover {
+  background: #3b82f6;
+  color: white;
+}
+
+.messageBody {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.toggleButton {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.toggleButton:hover {
+  background: #2563eb;
+}
+
+.bodyContent {
+  margin-top: 12px;
+  padding: 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .empty {

@@ -67,6 +67,27 @@
   cursor: not-allowed;
 }
 
+.resetButton {
+  padding: 8px 16px;
+  background-color: #6b7280;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 0.2s;
+}
+
+.resetButton:hover {
+  background-color: #ef4444;
+}
+
+.resetButton:disabled {
+  background-color: #9ca3af;
+  cursor: not-allowed;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

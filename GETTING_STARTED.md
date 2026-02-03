@@ -21,6 +21,8 @@ The first run will:
 2. Build and start the Go backend API
 3. Build and start the TypeScript React frontend
 
+**Mbox sync (Docker):** To use "Sync mbox files", add `.mbox` files to the project’s `data/` folder (created on first run), then click Sync mbox files in the UI. Or use **Upload Mbox** to upload a file; it is stored in the same directory.
+
 ## Local Development Setup
 
 ### Prerequisites

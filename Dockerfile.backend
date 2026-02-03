@@ -1,14 +1,10 @@
-# Build stage for backend
-FROM golang:1.21-alpine AS backend-builder
-RUN apk add --no-cache git make
+# Development image: Go + Air, code mounted at runtime
+FROM golang:1.22-alpine
+RUN apk add --no-cache git ca-certificates
+# Install Air for live reload (requires Go 1.22+)
+RUN go install github.com/air-verse/air@v1.52.3
+ENV PATH="/go/bin:$PATH"
 WORKDIR /app
-COPY backend/ .
-RUN rm -f go.sum && go build -mod=mod -o main .
-
-# Runtime stage for backend
-FROM alpine:3.18
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-COPY --from=backend-builder /app/main .
 EXPOSE 8080
-CMD ["./main"]
+# Code is mounted via docker-compose; Air watches and rebuilds on change
+CMD ["air", "-c", ".air.toml"]

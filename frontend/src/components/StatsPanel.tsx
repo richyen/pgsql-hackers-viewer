@@ -5,17 +5,17 @@ import styles from './StatsPanel.module.css';
 interface StatsPanelProps {
   stats: Stats | null;
   isLoading: boolean;
-  onSync: () => void;
   onMboxSync: () => void;
   onMboxUpload: (file: File) => void;
+  onReset: () => void;
 }
 
 export const StatsPanel: React.FC<StatsPanelProps> = ({
   stats,
   isLoading,
-  onSync,
   onMboxSync,
   onMboxUpload,
+  onReset,
 }) => {
   const [isUploading, setIsUploading] = React.useState(false);
 
@@ -39,6 +39,8 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
 
   const statusColors: { [key: string]: string } = {
     'in-progress': '#10b981',
+    'has-patch': '#8b5cf6',
+    'stalled-patch': '#ec4899',
     discussion: '#3b82f6',
     stalled: '#f59e0b',
     abandoned: '#ef4444',
@@ -51,19 +53,16 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
         <div className={styles.buttonGroup}>
           <button
             className={styles.syncButton}
-            onClick={onSync}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Syncing IMAP...' : 'Sync IMAP'}
-          </button>
-          <button
-            className={styles.syncButton}
             onClick={onMboxSync}
             disabled={isLoading}
+            title="Download and sync mbox archives from postgresql.org (last 365 days)"
           >
             {isLoading ? 'Syncing...' : 'Sync Mbox Files'}
           </button>
-          <label className={styles.uploadLabel}>
+          <label 
+            className={styles.uploadLabel}
+            title="Upload a local .mbox file to import messages"
+          >
             <input
               type="file"
               accept=".mbox"
@@ -73,6 +72,14 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
             />
             {isUploading ? 'Uploading...' : 'Upload Mbox'}
           </label>
+          <button
+            className={styles.resetButton}
+            onClick={onReset}
+            disabled={isLoading}
+            title="Clear all threads and messages; next sync will re-download from scratch"
+          >
+            Reset Database
+          </button>
         </div>
       </div>
 

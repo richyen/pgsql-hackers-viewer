@@ -28,7 +28,11 @@ export interface Message {
   subject: string;
   author: string;
   author_email: string;
+  body?: string;
   created_at: string;
+  has_patch: boolean;
+  patch_status?: 'proposed' | 'accepted' | 'committed' | 'rejected' | '';
+  commitfest_id?: string;
 }
 
 export interface Stats {
@@ -40,10 +44,19 @@ export interface Stats {
   last_sync?: string;
 }
 
+export interface SyncProgress {
+  months_synced: number;
+  total_months: number;
+  latest_message_date?: string;
+  current_month: string;
+  is_syncing: boolean;
+  last_synced_at?: string;
+}
+
 export const threadAPI = {
-  getThreads: (status?: string, limit?: number) =>
+  getThreads: (status?: string, limit?: number, offset?: number, search?: string) =>
     api.get<Thread[]>('/threads', {
-      params: { status, limit: limit || 50 },
+      params: { status, limit: limit || 50, offset: offset || 0, search },
     }),
 
   getThread: (id: string) =>
@@ -52,14 +65,20 @@ export const threadAPI = {
   getThreadMessages: (id: string) =>
     api.get<Message[]>(`/threads/${id}/messages`),
 
+  getMessage: (id: string) =>
+    api.get<Message>(`/messages/${id}`),
+
   getStats: () =>
     api.get<Stats>('/stats'),
 
-  sync: () =>
-    api.post('/sync', {}),
+  getSyncProgress: () =>
+    api.get<SyncProgress>('/sync/progress'),
 
   syncMbox: () =>
     api.post('/sync/mbox/all', {}),
+
+  reset: () =>
+    api.post<{ status: string; timestamp: string }>('/reset', {}),
 
   uploadMbox: (file: File) => {
     const formData = new FormData();

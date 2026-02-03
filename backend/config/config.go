@@ -28,9 +28,23 @@ type Config struct {
 
 	// File storage
 	DataDir string
+
+	// PostgreSQL.org mbox archive (HTTP Basic Auth; required for raw mbox download)
+	ArchiveUsername string
+	ArchivePassword string
+
+	// Environment mode (dev or production)
+	ENV string
+
+	// Cleanup mbox files after ingestion (production behavior)
+	CleanupMboxFiles bool
 }
 
 func LoadConfig() *Config {
+	env := getEnv("ENV", "development")
+	// In production, cleanup mbox files after ingestion; in dev, keep them
+	cleanupMbox := env == "production"
+
 	return &Config{
 		DatabaseURL:      getEnv("DATABASE_URL", ""),
 		DBHost:           getEnv("DB_HOST", "localhost"),
@@ -46,6 +60,10 @@ func LoadConfig() *Config {
 		MailPassword:     getEnv("MAIL_PASSWORD", ""),
 		MailingListEmail: getEnv("MAILING_LIST_EMAIL", "pgsql-hackers@postgresql.org"),
 		DataDir:          getEnv("DATA_DIR", "./data"),
+		ArchiveUsername:  getEnv("ARCHIVE_USERNAME", "archives"),
+		ArchivePassword:  getEnv("ARCHIVE_PASSWORD", "antispam"),
+		ENV:              env,
+		CleanupMboxFiles: cleanupMbox,
 	}
 }
 
