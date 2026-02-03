@@ -37,13 +37,13 @@ func main() {
 	// Set up API routes
 	api.RegisterRoutes(router, database, cfg)
 
-	// Add CORS middleware
-	router.Use(corsMiddleware)
+	// Wrap router with CORS so preflight OPTIONS (unmatched by route) get CORS headers
+	handler := corsMiddleware(router)
 
 	// Start server
 	addr := fmt.Sprintf("%s:%s", cfg.APIHost, cfg.APIPort)
 	log.Printf("Server starting on %s", addr)
-	if err := http.ListenAndServe(addr, router); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

@@ -124,6 +124,20 @@ function App() {
     }
   };
 
+  const handleReset = async () => {
+    if (!window.confirm('Clear all threads and messages? Next sync will re-download from PostgreSQL.org.')) return;
+    try {
+      await threadAPI.reset();
+      setThreads([]);
+      setSelectedThread(null);
+      setMessages([]);
+      const statsResponse = await threadAPI.getStats();
+      setStats(statsResponse.data);
+    } catch (error) {
+      console.error('Error resetting database:', error);
+    }
+  };
+
   return (
     <div className={styles.app}>
       <header className={styles.header}>
@@ -140,6 +154,7 @@ function App() {
           onSync={handleSync}
           onMboxSync={handleMboxSync}
           onMboxUpload={handleMboxUpload}
+          onReset={handleReset}
         />
 
         <div className={styles.mainContent}>

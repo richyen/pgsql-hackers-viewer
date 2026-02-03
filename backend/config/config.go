@@ -28,6 +28,10 @@ type Config struct {
 
 	// File storage
 	DataDir string
+
+	// PostgreSQL.org mbox archive (HTTP Basic Auth; required for raw mbox download)
+	ArchiveUsername string
+	ArchivePassword string
 }
 
 func LoadConfig() *Config {
@@ -46,6 +50,8 @@ func LoadConfig() *Config {
 		MailPassword:     getEnv("MAIL_PASSWORD", ""),
 		MailingListEmail: getEnv("MAILING_LIST_EMAIL", "pgsql-hackers@postgresql.org"),
 		DataDir:          getEnv("DATA_DIR", "./data"),
+		ArchiveUsername:  getEnv("ARCHIVE_USERNAME", "archives"),
+		ArchivePassword:  getEnv("ARCHIVE_PASSWORD", "antispam"),
 	}
 }
 

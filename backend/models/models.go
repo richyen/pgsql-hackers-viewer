@@ -13,7 +13,7 @@ type Thread struct {
 	FirstAuthorEmail string   `json:"first_author_email"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
-	LastMessageAt   time.Time `json:"last_message_at"`
+	LastMessageAt   *time.Time `json:"last_message_at,omitempty"`
 	MessageCount    int       `json:"message_count"`
 	UniqueAuthors   int       `json:"unique_authors"`
 	Status          string    `json:"status"` // in-progress, discussion, stalled, abandoned

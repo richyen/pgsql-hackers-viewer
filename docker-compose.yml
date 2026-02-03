@@ -38,6 +38,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
+      # Mount source so edits on host trigger Air rebuild; no code in image
+      - ./backend:/app
       - ./data:/app/data
 
   frontend:

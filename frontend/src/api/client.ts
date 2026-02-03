@@ -61,6 +61,9 @@ export const threadAPI = {
   syncMbox: () =>
     api.post('/sync/mbox/all', {}),
 
+  reset: () =>
+    api.post<{ status: string; timestamp: string }>('/reset', {}),
+
   uploadMbox: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

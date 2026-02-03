@@ -8,6 +8,7 @@ interface StatsPanelProps {
   onSync: () => void;
   onMboxSync: () => void;
   onMboxUpload: (file: File) => void;
+  onReset: () => void;
 }
 
 export const StatsPanel: React.FC<StatsPanelProps> = ({
@@ -16,6 +17,7 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
   onSync,
   onMboxSync,
   onMboxUpload,
+  onReset,
 }) => {
   const [isUploading, setIsUploading] = React.useState(false);
 
@@ -73,6 +75,14 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
             />
             {isUploading ? 'Uploading...' : 'Upload Mbox'}
           </label>
+          <button
+            className={styles.resetButton}
+            onClick={onReset}
+            disabled={isLoading}
+            title="Clear all threads and messages; next sync will re-download from scratch"
+          >
+            Reset Database
+          </button>
         </div>
       </div>
 

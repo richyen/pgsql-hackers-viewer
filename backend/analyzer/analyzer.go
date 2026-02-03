@@ -38,8 +38,13 @@ func (ta *ThreadAnalyzer) ClassifyThread(threadID string) (string, error) {
 	// Check for patch-related keywords
 	hasPatch, hasReview := ta.checkForPatchKeywords(threadID)
 
-	// Calculate days since last message
-	daysSince := time.Since(lastMessageAt.Time).Hours() / 24
+	// Calculate days since last message (treat missing as very old)
+	var daysSince float64
+	if lastMessageAt.Valid {
+		daysSince = time.Since(lastMessageAt.Time).Hours() / 24
+	} else {
+		daysSince = 9999 // no messages or no date -> treat as old
+	}
 
 	// Classification logic
 	if hasPatch && (hasReview || messageCount > 3) {
@@ -99,9 +104,9 @@ func (ta *ThreadAnalyzer) checkForPatchKeywords(threadID string) (bool, bool) {
 func (ta *ThreadAnalyzer) UpdateThreadActivity(threadID string) error {
 	var messageCount int
 	var uniqueAuthors int
-	var lastMessageAt time.Time
+	var lastMessageAt sql.NullTime
 
-	// Get message count and unique authors
+	// Get message count and unique authors (MAX(created_at) is NULL when thread has no messages)
 	err := ta.db.QueryRow(`
 		SELECT 
 			COUNT(*),
@@ -118,10 +123,18 @@ func (ta *ThreadAnalyzer) UpdateThreadActivity(threadID string) error {
 	// Check for patch and review keywords
 	hasPatch, hasReview := ta.checkForPatchKeywords(threadID)
 
-	// Calculate days since last message
-	daysSince := int(time.Since(lastMessageAt).Hours() / 24)
+	// Use last message time for days-since; when no messages, lastAt is zero
+	var lastAt time.Time
+	if lastMessageAt.Valid {
+		lastAt = lastMessageAt.Time
+	}
+	daysSince := int(time.Since(lastAt).Hours() / 24)
 
-	// Update thread record
+	// last_message_at: NULL when no messages, else the max created_at
+	var lastAtArg interface{} = nil
+	if lastMessageAt.Valid {
+		lastAtArg = lastMessageAt.Time
+	}
 	_, err = ta.db.Exec(`
 		UPDATE threads
 		SET 
@@ -130,7 +143,7 @@ func (ta *ThreadAnalyzer) UpdateThreadActivity(threadID string) error {
 			last_message_at = $3,
 			updated_at = NOW()
 		WHERE id = $4
-	`, messageCount, uniqueAuthors, lastMessageAt, threadID)
+	`, messageCount, uniqueAuthors, lastAtArg, threadID)
 
 	if err != nil {
 		return err
