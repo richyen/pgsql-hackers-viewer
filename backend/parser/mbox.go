@@ -2,7 +2,10 @@ package parser
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
+	"io"
+	"mime/quotedprintable"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +39,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 	var messages []*models.Message
 	var currentMessage *models.Message
 	var messageBody strings.Builder
+	var contentTransferEncoding string
 	inBody := false // Track if we've finished headers and are in body
 
 	scanner := bufio.NewScanner(file)
@@ -46,13 +50,14 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		if strings.HasPrefix(line, "From ") {
 			// Save previous message if it exists
 			if currentMessage != nil {
-				currentMessage.Body = strings.TrimSpace(messageBody.String())
+				currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding)
 				messages = append(messages, currentMessage)
 			}
 
 			// Start new message
 			currentMessage = &models.Message{}
 			messageBody.Reset()
+			contentTransferEncoding = ""
 			inBody = false
 			continue
 		}
@@ -84,6 +89,8 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 					currentMessage.Author, currentMessage.AuthorEmail = parseFromHeader(value)
 				case "date":
 					currentMessage.CreatedAt = parseDate(value)
+				case "content-transfer-encoding":
+					contentTransferEncoding = strings.ToLower(strings.TrimSpace(value))
 				}
 			}
 		} else if inBody {
@@ -95,7 +102,12 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 	// Save last message
 	if currentMessage != nil {
-		currentMessage.Body = strings.TrimSpace(messageBody.String())
+		currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding)
+		// Detect patches in message body
+		currentMessage.HasPatch = detectPatch(currentMessage.Body, currentMessage.Subject)
+		if currentMessage.HasPatch {
+			currentMessage.PatchStatus = detectPatchStatus(currentMessage.Body, currentMessage.Subject)
+		}
 		messages = append(messages, currentMessage)
 	}
 
@@ -209,4 +221,222 @@ func parseDate(dateStr string) time.Time {
 
 	// Default to now if parsing fails
 	return time.Now()
+}
+
+// decodeMessageBody decodes the message body based on Content-Transfer-Encoding
+// Also handles MIME multipart messages by extracting and decoding each part
+func decodeMessageBody(body, encoding string) string {
+	body = strings.TrimSpace(body)
+
+	// Check if this is a multipart MIME message
+	if strings.Contains(body, "Content-Type:") && strings.Contains(body, "------") {
+		return decodeMimeMultipart(body)
+	}
+
+	switch encoding {
+	case "base64":
+		// Decode base64 content
+		decoded, err := base64.StdEncoding.DecodeString(body)
+		if err != nil {
+			// Try with padding if it fails
+			body = strings.ReplaceAll(body, "\n", "")
+			body = strings.ReplaceAll(body, "\r", "")
+			decoded, err = base64.StdEncoding.DecodeString(body)
+			if err != nil {
+				// Return original if decoding fails
+				return body
+			}
+		}
+		return string(decoded)
+
+	case "quoted-printable":
+		// Decode quoted-printable content
+		reader := quotedprintable.NewReader(strings.NewReader(body))
+		decoded, err := io.ReadAll(reader)
+		if err != nil {
+			return body
+		}
+		return string(decoded)
+
+	case "7bit", "8bit", "binary", "":
+		// No decoding needed
+		return body
+
+	default:
+		// Unknown encoding, return as-is
+		return body
+	}
+}
+
+// decodeMimeMultipart extracts and decodes text parts from a MIME multipart message
+func decodeMimeMultipart(body string) string {
+	var result strings.Builder
+	lines := strings.Split(body, "\n")
+
+	var inPart bool
+	var partEncoding string
+	var partContentType string
+	var partBody strings.Builder
+
+	for _, line := range lines {
+		// Check for boundary markers
+		if strings.HasPrefix(line, "------") {
+			// Save previous part if it was text
+			if inPart && strings.Contains(partContentType, "text/") {
+				decoded := decodePartBody(partBody.String(), partEncoding)
+				if result.Len() > 0 {
+					result.WriteString("\n\n---\n\n")
+				}
+				result.WriteString(decoded)
+			}
+
+			// Reset for new part
+			inPart = true
+			partEncoding = ""
+			partContentType = ""
+			partBody.Reset()
+			continue
+		}
+
+		if !inPart {
+			continue
+		}
+
+		// Parse part headers
+		if strings.HasPrefix(line, "Content-Type:") {
+			partContentType = strings.ToLower(line)
+		} else if strings.HasPrefix(line, "Content-Transfer-Encoding:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				partEncoding = strings.ToLower(strings.TrimSpace(parts[1]))
+			}
+		} else if strings.TrimSpace(line) == "" && partContentType != "" {
+			// Empty line after headers marks start of body
+			continue
+		} else if partContentType != "" {
+			// Part body content
+			partBody.WriteString(line)
+			partBody.WriteString("\n")
+		}
+	}
+
+	// Save last part
+	if inPart && strings.Contains(partContentType, "text/") {
+		decoded := decodePartBody(partBody.String(), partEncoding)
+		if result.Len() > 0 {
+			result.WriteString("\n\n---\n\n")
+		}
+		result.WriteString(decoded)
+	}
+
+	if result.Len() > 0 {
+		return strings.TrimSpace(result.String())
+	}
+
+	// If no text parts found, return original
+	return body
+}
+
+// decodePartBody decodes a MIME part body based on its encoding
+func decodePartBody(body, encoding string) string {
+	body = strings.TrimSpace(body)
+
+	switch encoding {
+	case "base64":
+		// Remove newlines for base64 decoding
+		body = strings.ReplaceAll(body, "\n", "")
+		body = strings.ReplaceAll(body, "\r", "")
+		decoded, err := base64.StdEncoding.DecodeString(body)
+		if err != nil {
+			return body
+		}
+		return string(decoded)
+
+	case "quoted-printable":
+		reader := quotedprintable.NewReader(strings.NewReader(body))
+		decoded, err := io.ReadAll(reader)
+		if err != nil {
+			return body
+		}
+		return string(decoded)
+
+	default:
+		return body
+	}
+}
+
+// detectPatch checks if a message contains a patch
+func detectPatch(body, subject string) bool {
+	bodyLower := strings.ToLower(body)
+	subjectLower := strings.ToLower(subject)
+
+	// Check for patch indicators in subject
+	if strings.Contains(subjectLower, "[patch") ||
+		strings.Contains(subjectLower, "patch v") ||
+		strings.Contains(subjectLower, "v1 patch") ||
+		strings.Contains(subjectLower, "v2 patch") {
+		return true
+	}
+
+	// Check for diff/patch content in body
+	// Look for unified diff format markers
+	if strings.Contains(body, "diff --git") ||
+		strings.Contains(body, "--- a/") ||
+		strings.Contains(body, "+++ b/") {
+		return true
+	}
+
+	// Look for context diff markers
+	if strings.Contains(body, "*** ") && strings.Contains(body, "--- ") {
+		return true
+	}
+
+	// Look for patch attachment indicators
+	if strings.Contains(bodyLower, "attached patch") ||
+		strings.Contains(bodyLower, "patch attached") ||
+		strings.Contains(bodyLower, ".patch") ||
+		strings.Contains(bodyLower, "content-disposition: attachment") {
+		return true
+	}
+
+	return false
+}
+
+// detectPatchStatus analyzes the message to determine patch status
+func detectPatchStatus(body, subject string) string {
+	bodyLower := strings.ToLower(body)
+	subjectLower := strings.ToLower(subject)
+
+	// Check for committed/applied indicators
+	if strings.Contains(bodyLower, "committed") ||
+		strings.Contains(bodyLower, "pushed") ||
+		strings.Contains(bodyLower, "applied") ||
+		strings.Contains(subjectLower, "committed") {
+		return "committed"
+	}
+
+	// Check for accepted/ready for committer indicators
+	if strings.Contains(bodyLower, "ready for committer") ||
+		strings.Contains(bodyLower, "marked as ready") ||
+		strings.Contains(bodyLower, "moved to ready for committer") {
+		return "accepted"
+	}
+
+	// Check for rejected indicators
+	if strings.Contains(bodyLower, "rejected") ||
+		strings.Contains(bodyLower, "not applying") ||
+		strings.Contains(bodyLower, "returned with feedback") {
+		return "rejected"
+	}
+
+	// Check for commitfest references
+	if strings.Contains(bodyLower, "commitfest") ||
+		strings.Contains(bodyLower, "cf entry") ||
+		strings.Contains(subjectLower, "commitfest") {
+		// Extract commitfest ID if possible - for now just mark as proposed
+		return "proposed"
+	}
+
+	// Default status for patches
+	return "proposed"
 }

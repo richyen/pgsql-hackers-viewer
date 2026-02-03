@@ -29,6 +29,9 @@ func RegisterRoutes(router *mux.Router, db *sql.DB, cfg *config.Config) {
 	router.HandleFunc("/api/threads/{id}", getThreadHandler(db)).Methods("GET")
 	router.HandleFunc("/api/threads/{id}/messages", getThreadMessagesHandler(db)).Methods("GET")
 
+	// Message endpoints
+	router.HandleFunc("/api/messages/{id}", getMessageHandler(db)).Methods("GET")
+
 	// Stats endpoint
 	router.HandleFunc("/api/stats", getStatsHandler(db)).Methods("GET")
 
@@ -178,7 +181,8 @@ func getThreadMessagesHandler(db *sql.DB) http.HandlerFunc {
 		threadID := vars["id"]
 
 		rows, err := db.Query(`
-			SELECT id, thread_id, message_id, subject, author, author_email, body, created_at
+			SELECT id, thread_id, message_id, subject, author, author_email, body, created_at,
+			       has_patch, patch_status, commitfest_id
 			FROM messages
 			WHERE thread_id = $1
 			ORDER BY created_at ASC
@@ -198,6 +202,7 @@ func getThreadMessagesHandler(db *sql.DB) http.HandlerFunc {
 			if err := rows.Scan(
 				&msg.ID, &msg.ThreadID, &msg.MessageID, &msg.Subject,
 				&msg.Author, &msg.AuthorEmail, &msg.Body, &msg.CreatedAt,
+				&msg.HasPatch, &msg.PatchStatus, &msg.CommitFestID,
 			); err != nil {
 				log.Printf("Error scanning message: %v", err)
 				continue
@@ -206,6 +211,40 @@ func getThreadMessagesHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		json.NewEncoder(w).Encode(messages)
+	}
+}
+
+func getMessageHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		vars := mux.Vars(r)
+		messageID := vars["id"]
+
+		msg := &models.Message{}
+		err := db.QueryRow(`
+			SELECT id, thread_id, message_id, subject, author, author_email, body, created_at,
+			       has_patch, patch_status, commitfest_id
+			FROM messages
+			WHERE id = $1
+		`, messageID).Scan(
+			&msg.ID, &msg.ThreadID, &msg.MessageID, &msg.Subject,
+			&msg.Author, &msg.AuthorEmail, &msg.Body, &msg.CreatedAt,
+			&msg.HasPatch, &msg.PatchStatus, &msg.CommitFestID,
+		)
+
+		if err == sql.ErrNoRows {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Message not found"})
+			return
+		} else if err != nil {
+			log.Printf("Error querying message: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to fetch message"})
+			return
+		}
+
+		json.NewEncoder(w).Encode(msg)
 	}
 }
 
@@ -542,10 +581,10 @@ func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 			msg.MessageID = sanitizeUTF8(msg.MessageID)
 
 			result, err := db.Exec(`
-				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, body, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				ON CONFLICT (message_id) DO UPDATE SET thread_id = EXCLUDED.thread_id
-			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.Body, msg.CreatedAt)
+				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, body, created_at, has_patch, patch_status, commitfest_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				ON CONFLICT (message_id) DO UPDATE SET thread_id = EXCLUDED.thread_id, has_patch = EXCLUDED.has_patch, patch_status = EXCLUDED.patch_status, commitfest_id = EXCLUDED.commitfest_id
+			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.Body, msg.CreatedAt, msg.HasPatch, msg.PatchStatus, msg.CommitFestID)
 			if err != nil {
 				log.Printf("Error inserting message: %v", err)
 				continue

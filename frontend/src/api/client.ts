@@ -30,6 +30,9 @@ export interface Message {
   author_email: string;
   body?: string;
   created_at: string;
+  has_patch: boolean;
+  patch_status?: 'proposed' | 'accepted' | 'committed' | 'rejected' | '';
+  commitfest_id?: string;
 }
 
 export interface Stats {
@@ -53,7 +56,7 @@ export interface SyncProgress {
 export const threadAPI = {
   getThreads: (status?: string, limit?: number) =>
     api.get<Thread[]>('/threads', {
-      params: { status, limit: limit || 50 },
+      params: { status, limit: limit || 500 }, // Increased default limit for better search
     }),
 
   getThread: (id: string) =>
@@ -61,6 +64,9 @@ export const threadAPI = {
 
   getThreadMessages: (id: string) =>
     api.get<Message[]>(`/threads/${id}/messages`),
+
+  getMessage: (id: string) =>
+    api.get<Message>(`/messages/${id}`),
 
   getStats: () =>
     api.get<Stats>('/stats'),

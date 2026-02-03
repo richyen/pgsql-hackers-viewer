@@ -10,13 +10,81 @@ import styles from './App.module.css';
 
 function App() {
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [allThreads, setAllThreads] = useState<Thread[]>([]); // Store all threads for client-side filtering
   const [selectedThread, setSelectedThread] = useState<Thread | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
+  const [searchTerm, setSearchTerm] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+
+  // Handle URL parameters for deep-linking
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const threadId = params.get('thread');
+    const messageId = params.get('message');
+
+    console.log('Deep link params:', { threadId, messageId });
+
+    if (threadId) {
+      // Load the specific thread
+      threadAPI.getThread(threadId).then(response => {
+        console.log('Loaded thread from URL:', response.data);
+        setSelectedThread(response.data);
+        if (messageId) {
+          setHighlightedMessageId(messageId);
+        }
+      }).catch(error => {
+        console.error('Error loading thread from URL:', error);
+        alert('Thread not found. The link may be invalid or the thread may have been deleted.');
+      });
+    }
+  }, []);
+
+  // Update URL when thread selection changes (but not during initial load from URL)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlThreadId = params.get('thread');
+    
+    if (selectedThread && selectedThread.id !== urlThreadId) {
+      // Update URL without full page reload
+      const newUrl = `${window.location.pathname}?thread=${selectedThread.id}`;
+      window.history.pushState({}, '', newUrl);
+      setHighlightedMessageId(null); // Clear highlight when manually selecting a thread
+    } else if (!selectedThread && urlThreadId) {
+      // Clear URL params when thread is deselected
+      window.history.pushState({}, '', window.location.pathname);
+    }
+  }, [selectedThread]);
+
+  // Handle browser back/forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const threadId = params.get('thread');
+      const messageId = params.get('message');
+
+      if (threadId) {
+        threadAPI.getThread(threadId).then(response => {
+          setSelectedThread(response.data);
+          if (messageId) {
+            setHighlightedMessageId(messageId);
+          }
+        }).catch(error => {
+          console.error('Error loading thread from history:', error);
+        });
+      } else {
+        setSelectedThread(null);
+        setHighlightedMessageId(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Fetch stats on mount and periodically
   useEffect(() => {
@@ -41,9 +109,14 @@ function App() {
       setIsLoading(true);
       try {
         const response = await threadAPI.getThreads(selectedStatus);
-        setThreads(response.data || []);
-        setSelectedThread(null);
-        setMessages([]);
+        setAllThreads(response.data || []);
+        // Don't clear selectedThread if we're loading from URL params
+        const params = new URLSearchParams(window.location.search);
+        const threadIdFromUrl = params.get('thread');
+        if (!threadIdFromUrl) {
+          setSelectedThread(null);
+          setMessages([]);
+        }
       } catch (error) {
         console.error('Error fetching threads:', error);
       } finally {
@@ -54,8 +127,21 @@ function App() {
     fetchThreads();
   }, [selectedStatus]);
 
+  // Filter threads by search term
+  useEffect(() => {
+    if (!searchTerm.trim()) {
+      setThreads(allThreads);
+    } else {
+      const filtered = allThreads.filter(thread =>
+        thread.subject.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+      setThreads(filtered);
+    }
+  }, [searchTerm, allThreads]);
+
   // Fetch messages when thread is selected
   useEffect(() => {
+    console.log('Thread selection changed:', selectedThread?.id);
     if (!selectedThread) {
       setMessages([]);
       return;
@@ -64,7 +150,9 @@ function App() {
     const fetchMessages = async () => {
       setIsMessagesLoading(true);
       try {
+        console.log('Fetching messages for thread:', selectedThread.id);
         const response = await threadAPI.getThreadMessages(selectedThread.id);
+        console.log('Received messages:', response.data?.length || 0);
         setMessages(response.data || []);
       } catch (error) {
         console.error('Error fetching messages:', error);
@@ -83,7 +171,7 @@ function App() {
       // Refresh data after sync
       setTimeout(async () => {
         const response = await threadAPI.getThreads(selectedStatus);
-        setThreads(response.data || []);
+        setAllThreads(response.data || []);
         const statsResponse = await threadAPI.getStats();
         setStats(statsResponse.data);
       }, 2000);
@@ -100,7 +188,7 @@ function App() {
       // Refresh data after upload
       setTimeout(async () => {
         const response = await threadAPI.getThreads(selectedStatus);
-        setThreads(response.data || []);
+        setAllThreads(response.data || []);
         const statsResponse = await threadAPI.getStats();
         setStats(statsResponse.data);
       }, 2000);
@@ -114,6 +202,7 @@ function App() {
     try {
       await threadAPI.reset();
       setThreads([]);
+      setAllThreads([]);
       setSelectedThread(null);
       setMessages([]);
       const statsResponse = await threadAPI.getStats();
@@ -122,6 +211,13 @@ function App() {
       console.error('Error resetting database:', error);
     }
   };
+
+  console.log('App render state:', { 
+    selectedThread: selectedThread?.id, 
+    messagesCount: messages.length, 
+    isMessagesLoading,
+    highlightedMessageId 
+  });
 
   return (
     <div className={styles.app}>
@@ -158,6 +254,8 @@ function App() {
             <FilterBar
               selectedStatus={selectedStatus}
               onStatusChange={setSelectedStatus}
+              searchTerm={searchTerm}
+              onSearchChange={setSearchTerm}
             />
             <ThreadList
               threads={threads}
@@ -192,6 +290,8 @@ function App() {
                   messages={messages}
                   isLoading={isMessagesLoading}
                   threadFirstAuthorEmail={selectedThread.first_author_email}
+                  highlightedMessageId={highlightedMessageId}
+                  threadId={selectedThread.id}
                 />
               </div>
             ) : (

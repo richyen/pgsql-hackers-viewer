@@ -4,11 +4,15 @@ import styles from './FilterBar.module.css';
 interface FilterBarProps {
   onStatusChange: (status: string | undefined) => void;
   selectedStatus?: string;
+  onSearchChange: (search: string) => void;
+  searchTerm: string;
 }
 
 export const FilterBar: React.FC<FilterBarProps> = ({
   onStatusChange,
   selectedStatus,
+  onSearchChange,
+  searchTerm,
 }) => {
   const statuses = [
     { value: 'in-progress', label: 'In Progress', tooltip: 'Threads with patches and active review activity', color: '#10b981' },
@@ -19,8 +23,19 @@ export const FilterBar: React.FC<FilterBarProps> = ({
 
   return (
     <div className={styles.container}>
-      <h3>Filter by Status</h3>
-      <div className={styles.buttons}>
+      <div className={styles.searchSection}>
+        <h3>Search by Subject</h3>
+        <input
+          type="text"
+          className={styles.searchInput}
+          placeholder="Search threads by subject..."
+          value={searchTerm}
+          onChange={(e) => onSearchChange(e.target.value)}
+        />
+      </div>
+      <div className={styles.statusSection}>
+        <h3>Filter by Status</h3>
+        <div className={styles.buttons}>
         <button
           className={`${styles.button} ${!selectedStatus ? styles.active : ''}`}
           onClick={() => onStatusChange(undefined)}
@@ -43,6 +58,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             {status.label}
           </button>
         ))}
+        </div>
       </div>
     </div>
   );
