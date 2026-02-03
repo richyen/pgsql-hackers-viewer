@@ -5,7 +5,6 @@ import styles from './StatsPanel.module.css';
 interface StatsPanelProps {
   stats: Stats | null;
   isLoading: boolean;
-  onSync: () => void;
   onMboxSync: () => void;
   onMboxUpload: (file: File) => void;
   onReset: () => void;
@@ -14,7 +13,6 @@ interface StatsPanelProps {
 export const StatsPanel: React.FC<StatsPanelProps> = ({
   stats,
   isLoading,
-  onSync,
   onMboxSync,
   onMboxUpload,
   onReset,
@@ -53,19 +51,16 @@ export const StatsPanel: React.FC<StatsPanelProps> = ({
         <div className={styles.buttonGroup}>
           <button
             className={styles.syncButton}
-            onClick={onSync}
-            disabled={isLoading}
-          >
-            {isLoading ? 'Syncing IMAP...' : 'Sync IMAP'}
-          </button>
-          <button
-            className={styles.syncButton}
             onClick={onMboxSync}
             disabled={isLoading}
+            title="Download and sync mbox archives from postgresql.org (last 365 days)"
           >
             {isLoading ? 'Syncing...' : 'Sync Mbox Files'}
           </button>
-          <label className={styles.uploadLabel}>
+          <label 
+            className={styles.uploadLabel}
+            title="Upload a local .mbox file to import messages"
+          >
             <input
               type="file"
               accept=".mbox"

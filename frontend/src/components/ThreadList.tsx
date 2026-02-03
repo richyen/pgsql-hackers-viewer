@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Thread } from '../api/client';
 import styles from './ThreadList.module.css';
 

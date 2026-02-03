@@ -4,6 +4,8 @@ import { ThreadList } from './components/ThreadList';
 import { MessageThread } from './components/MessageThread';
 import { StatsPanel } from './components/StatsPanel';
 import { FilterBar } from './components/FilterBar';
+import { SyncProgressBar } from './components/SyncProgressBar';
+import { HelpModal } from './components/HelpModal';
 import styles from './App.module.css';
 
 function App() {
@@ -14,6 +16,7 @@ function App() {
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [isMessagesLoading, setIsMessagesLoading] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // Fetch stats on mount and periodically
   useEffect(() => {
@@ -73,24 +76,6 @@ function App() {
     fetchMessages();
   }, [selectedThread]);
 
-  const handleSync = async () => {
-    setIsLoading(true);
-    try {
-      await threadAPI.sync();
-      // Refresh data after sync
-      setTimeout(async () => {
-        const response = await threadAPI.getThreads(selectedStatus);
-        setThreads(response.data || []);
-        const statsResponse = await threadAPI.getStats();
-        setStats(statsResponse.data);
-      }, 2000);
-    } catch (error) {
-      console.error('Error syncing:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleMboxSync = async () => {
     setIsLoading(true);
     try {
@@ -141,17 +126,28 @@ function App() {
   return (
     <div className={styles.app}>
       <header className={styles.header}>
-        <h1>PostgreSQL Mailing List Thread Analyzer</h1>
-        <p>
-          Identify which pgsql-hackers threads are actively being worked on
-        </p>
+        <div>
+          <h1>PostgreSQL Mailing List Thread Analyzer</h1>
+          <p>
+            Identify which pgsql-hackers threads are actively being worked on
+          </p>
+        </div>
+        <button 
+          className={styles.helpButton}
+          onClick={() => setIsHelpOpen(true)}
+          title="View help and classification guide"
+        >
+          ? Help
+        </button>
       </header>
 
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
+
       <div className={styles.container}>
+        <SyncProgressBar />
         <StatsPanel
           stats={stats}
           isLoading={isLoading}
-          onSync={handleSync}
           onMboxSync={handleMboxSync}
           onMboxUpload={handleMboxUpload}
           onReset={handleReset}
@@ -195,6 +191,7 @@ function App() {
                 <MessageThread
                   messages={messages}
                   isLoading={isMessagesLoading}
+                  threadFirstAuthorEmail={selectedThread.first_author_email}
                 />
               </div>
             ) : (

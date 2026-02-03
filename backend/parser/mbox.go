@@ -36,25 +36,24 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 	var messages []*models.Message
 	var currentMessage *models.Message
 	var messageBody strings.Builder
+	inBody := false // Track if we've finished headers and are in body
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
 
 		// Check for start of new message (mbox format: "From " at line start)
-		if strings.HasPrefix(line, "From ") && len(line) > 5 && currentMessage != nil {
-			// Save previous message
-			currentMessage.Body = messageBody.String()
-			messages = append(messages, currentMessage)
+		if strings.HasPrefix(line, "From ") {
+			// Save previous message if it exists
+			if currentMessage != nil {
+				currentMessage.Body = strings.TrimSpace(messageBody.String())
+				messages = append(messages, currentMessage)
+			}
 
-			currentMessage = nil
-			messageBody.Reset()
-			continue
-		}
-
-		// Start of new message
-		if strings.HasPrefix(line, "From ") && len(line) > 5 {
+			// Start new message
 			currentMessage = &models.Message{}
+			messageBody.Reset()
+			inBody = false
 			continue
 		}
 
@@ -62,26 +61,33 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 			continue
 		}
 
-		// Parse email headers
-		if messageBody.Len() == 0 && strings.Contains(line, ": ") {
+		// Blank line separates headers from body
+		if !inBody && strings.TrimSpace(line) == "" {
+			inBody = true
+			continue
+		}
+
+		// Parse email headers (before blank line)
+		if !inBody && strings.Contains(line, ": ") {
 			parts := strings.SplitN(line, ": ", 2)
 			if len(parts) == 2 {
-				header := parts[0]
-				value := parts[1]
+				header := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
 
 				switch strings.ToLower(header) {
 				case "message-id":
-					currentMessage.MessageID = value
+					// Clean up message-id by removing angle brackets
+					currentMessage.MessageID = strings.Trim(value, "<>")
 				case "subject":
-					currentMessage.Subject = value
+					currentMessage.Subject = normalizeSubject(value)
 				case "from":
 					currentMessage.Author, currentMessage.AuthorEmail = parseFromHeader(value)
 				case "date":
 					currentMessage.CreatedAt = parseDate(value)
 				}
 			}
-		} else if messageBody.Len() > 0 || (strings.Contains(line, ": ") == false && line != "") {
-			// Body content
+		} else if inBody {
+			// Body content (after blank line)
 			messageBody.WriteString(line)
 			messageBody.WriteString("\n")
 		}
@@ -89,7 +95,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 	// Save last message
 	if currentMessage != nil {
-		currentMessage.Body = messageBody.String()
+		currentMessage.Body = strings.TrimSpace(messageBody.String())
 		messages = append(messages, currentMessage)
 	}
 
@@ -150,6 +156,23 @@ func (mp *MboxParser) ParseAllMboxFiles() ([]*models.Message, error) {
 	}
 
 	return allMessages, nil
+}
+
+// normalizeSubject removes Re:, Fwd: prefixes from subject
+func normalizeSubject(subject string) string {
+	subject = strings.TrimSpace(subject)
+	for {
+		original := subject
+		for _, prefix := range []string{"Re:", "RE:", "Fwd:", "FWD:", "Fw:"} {
+			if strings.HasPrefix(subject, prefix) {
+				subject = strings.TrimSpace(strings.TrimPrefix(subject, prefix))
+			}
+		}
+		if subject == original {
+			break
+		}
+	}
+	return subject
 }
 
 // parseFromHeader extracts name and email from "From" header

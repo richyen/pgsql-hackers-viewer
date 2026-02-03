@@ -28,6 +28,7 @@ export interface Message {
   subject: string;
   author: string;
   author_email: string;
+  body?: string;
   created_at: string;
 }
 
@@ -38,6 +39,15 @@ export interface Stats {
     [key: string]: number;
   };
   last_sync?: string;
+}
+
+export interface SyncProgress {
+  months_synced: number;
+  total_months: number;
+  latest_message_date?: string;
+  current_month: string;
+  is_syncing: boolean;
+  last_synced_at?: string;
 }
 
 export const threadAPI = {
@@ -55,8 +65,8 @@ export const threadAPI = {
   getStats: () =>
     api.get<Stats>('/stats'),
 
-  sync: () =>
-    api.post('/sync', {}),
+  getSyncProgress: () =>
+    api.get<SyncProgress>('/sync/progress'),
 
   syncMbox: () =>
     api.post('/sync/mbox/all', {}),

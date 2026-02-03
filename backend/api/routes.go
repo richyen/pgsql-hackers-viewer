@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -30,7 +33,7 @@ func RegisterRoutes(router *mux.Router, db *sql.DB, cfg *config.Config) {
 	router.HandleFunc("/api/stats", getStatsHandler(db)).Methods("GET")
 
 	// Sync endpoints
-	router.HandleFunc("/api/sync", syncHandler(db, cfg)).Methods("POST")
+	router.HandleFunc("/api/sync/progress", getSyncProgressHandler).Methods("GET")
 	router.HandleFunc("/api/sync/mbox", uploadMboxHandler(db, cfg)).Methods("POST")
 	router.HandleFunc("/api/sync/mbox/all", syncMboxHandler(db, cfg)).Methods("POST")
 
@@ -60,7 +63,7 @@ func resetHandler(db *sql.DB) http.HandlerFunc {
 		}
 		log.Println("Database reset: threads, messages, and thread_activities cleared")
 		json.NewEncoder(w).Encode(map[string]string{
-			"status":  "Database cleared. Run Sync mbox files to re-download and re-import.",
+			"status":    "Database cleared. Run Sync mbox files to re-download and re-import.",
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	}
@@ -175,7 +178,7 @@ func getThreadMessagesHandler(db *sql.DB) http.HandlerFunc {
 		threadID := vars["id"]
 
 		rows, err := db.Query(`
-			SELECT id, thread_id, message_id, subject, author, author_email, created_at
+			SELECT id, thread_id, message_id, subject, author, author_email, body, created_at
 			FROM messages
 			WHERE thread_id = $1
 			ORDER BY created_at ASC
@@ -194,7 +197,7 @@ func getThreadMessagesHandler(db *sql.DB) http.HandlerFunc {
 			msg := &models.Message{}
 			if err := rows.Scan(
 				&msg.ID, &msg.ThreadID, &msg.MessageID, &msg.Subject,
-				&msg.Author, &msg.AuthorEmail, &msg.CreatedAt,
+				&msg.Author, &msg.AuthorEmail, &msg.Body, &msg.CreatedAt,
 			); err != nil {
 				log.Printf("Error scanning message: %v", err)
 				continue
@@ -245,88 +248,10 @@ func getStatsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func syncHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		// For now, just return success - in production, this would async queue
-		go performSync(db, cfg)
-
-		json.NewEncoder(w).Encode(map[string]string{
-			"status": "Sync started",
-			"timestamp": time.Now().Format(time.RFC3339),
-		})
-	}
-}
-
-func performSync(db *sql.DB, cfg *config.Config) {
-	log.Println("Starting mail sync...")
-
-	// Create parser
-	mp := parser.NewMailParser(cfg.MailIMAPHost, cfg.MailIMAPPort, cfg.MailUsername, cfg.MailPassword)
-
-	// Fetch messages from past year
-	since := time.Now().AddDate(-1, 0, 0)
-	messages, err := mp.FetchMessages(cfg.MailingListEmail, since)
-	if err != nil {
-		log.Printf("Error fetching messages: %v", err)
-		return
-	}
-
-	if len(messages) == 0 {
-		log.Println("No new messages to sync")
-		return
-	}
-
-	// Group messages by subject (thread)
-	threads := groupByThread(messages)
-
-	// Store in database
-	threadAnalyzer := analyzer.NewThreadAnalyzer(db)
-	for subject, msgs := range threads {
-		threadID := uuid.New().String()
-
-		// Insert thread
-		firstMsg := msgs[0]
-		_, err := db.Exec(`
-			INSERT INTO threads (id, subject, first_message_id, first_author, first_author_email, created_at, last_message_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)
-			ON CONFLICT (id) DO NOTHING
-		`, threadID, subject, firstMsg.MessageID, firstMsg.Author, firstMsg.AuthorEmail, firstMsg.CreatedAt, firstMsg.CreatedAt)
-
-		if err != nil {
-			log.Printf("Error inserting thread: %v", err)
-			continue
-		}
-
-		// Insert messages
-		for _, msg := range msgs {
-			msg.ID = uuid.New().String()
-			msg.ThreadID = threadID
-			_, err := db.Exec(`
-				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
-				ON CONFLICT (message_id) DO NOTHING
-			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.CreatedAt)
-
-			if err != nil {
-				log.Printf("Error inserting message: %v", err)
-			}
-		}
-
-		// Analyze thread
-		if err := threadAnalyzer.UpdateThreadActivity(threadID); err != nil {
-			log.Printf("Error updating thread activity: %v", err)
-		}
-
-		// Classify thread
-		status, err := threadAnalyzer.ClassifyThread(threadID)
-		if err == nil {
-			db.Exec("UPDATE threads SET status = $1 WHERE id = $2", status, threadID)
-		}
-	}
-
-	log.Println("Mail sync completed")
+func getSyncProgressHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	progress := GlobalSyncState.Get()
+	json.NewEncoder(w).Encode(progress)
 }
 
 func groupByThread(messages []*models.Message) map[string][]*models.Message {
@@ -379,8 +304,8 @@ func uploadMboxHandler(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		go processMboxFile(db, cfg, filePath)
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":   "Mbox file uploaded and queued for processing",
-			"filename": header.Filename,
+			"status":    "Mbox file uploaded and queued for processing",
+			"filename":  header.Filename,
 			"timestamp": time.Now().Format(time.RFC3339),
 		})
 	}
@@ -415,6 +340,15 @@ func processMboxFile(db *sql.DB, cfg *config.Config, filePath string) {
 
 func performMboxSync(db *sql.DB, cfg *config.Config) {
 	log.Println("Starting mbox sync from PostgreSQL.org archives...")
+	GlobalSyncState.SetSyncing(true)
+	defer GlobalSyncState.SetSyncing(false)
+
+	// Catch any panics and log them
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("PANIC in performMboxSync: %v", r)
+		}
+	}()
 
 	// Determine range: from last recorded message (or 365 days ago) to present
 	const initialSyncDays = 365
@@ -445,28 +379,80 @@ func performMboxSync(db *sql.DB, cfg *config.Config) {
 		return
 	}
 
-	log.Printf("Syncing %d month(s) from %s to %s", len(months), start.Format("2006-01"), end.Format("2006-01"))
+	totalMonths := len(months)
+	log.Printf("Syncing %d month(s) from %s to %s", totalMonths, start.Format("2006-01"), end.Format("2006-01"))
+	GlobalSyncState.Update(0, totalMonths, "")
 
-	mboxParser := parser.NewMboxParser(cfg.DataDir)
-	var totalStored int
-	for _, ym := range months {
-		path, err := fetcher.DownloadMonth(cfg.DataDir, cfg.ArchiveUsername, cfg.ArchivePassword, ym.year, ym.month)
-		if err != nil {
-			log.Printf("Skip month %04d-%02d: %v", ym.year, ym.month, err)
-			continue
-		}
-		messages, err := mboxParser.ParseMboxFile(path)
-		if err != nil {
-			log.Printf("Error parsing %s: %v", path, err)
-			continue
-		}
-		if len(messages) == 0 {
-			continue
-		}
-		n := storeMessagesInDB(db, messages)
-		totalStored += n
+	// Convert yearMonth to fetcher.MonthDownload
+	downloads := make([]fetcher.MonthDownload, len(months))
+	for i, ym := range months {
+		downloads[i] = fetcher.MonthDownload{Year: ym.year, Month: ym.month}
 	}
 
+	// Download all months in parallel (3-4 workers)
+	const concurrentDownloads = 4
+	log.Printf("Starting parallel download with %d workers", concurrentDownloads)
+
+	// In dev mode, skip download if file exists; in production, always download fresh
+	skipIfExists := cfg.ENV == "development"
+	if skipIfExists {
+		log.Println("Dev mode: Using cached mbox files if available")
+	} else {
+		log.Println("Production mode: Downloading fresh mbox files")
+	}
+
+	downloadResults := fetcher.DownloadMonthsConcurrent(cfg.DataDir, cfg.ArchiveUsername, cfg.ArchivePassword, downloads, concurrentDownloads, skipIfExists)
+
+	// Process downloads and parse mbox files
+	log.Printf("Received %d download results", len(downloadResults))
+	mboxParser := parser.NewMboxParser(cfg.DataDir)
+	var totalStored int
+	processedCount := 0
+
+	for _, result := range downloadResults {
+		processedCount++
+		currentMonth := fmt.Sprintf("%04d-%02d", result.Year, result.Month)
+		GlobalSyncState.Update(processedCount, totalMonths, currentMonth)
+
+		if result.Error != nil {
+			log.Printf("Skip month %04d-%02d: %v", result.Year, result.Month, result.Error)
+			continue
+		}
+
+		log.Printf("Processing %04d-%02d from %s (took %v)", result.Year, result.Month, result.Path, result.Duration)
+
+		messages, err := mboxParser.ParseMboxFile(result.Path)
+		if err != nil {
+			log.Printf("Error parsing %s: %v", result.Path, err)
+			continue
+		}
+		log.Printf("Parsed %d messages from %s", len(messages), result.Path)
+		if len(messages) == 0 {
+			log.Printf("No messages in %s, skipping", result.Path)
+			continue
+		}
+		log.Printf("Storing %d messages in database", len(messages))
+		n := storeMessagesInDB(db, messages)
+		totalStored += n
+		log.Printf("Stored %d new messages (total so far: %d)", n, totalStored)
+
+		// In production mode, cleanup (delete) mbox file after successful ingestion
+		if cfg.CleanupMboxFiles {
+			if err := os.Remove(result.Path); err != nil {
+				log.Printf("Warning: Failed to cleanup mbox file %s: %v", result.Path, err)
+			} else {
+				log.Printf("Cleaned up mbox file: %s", result.Path)
+			}
+		}
+
+		// Update latest message date
+		if len(messages) > 0 {
+			latestMsg := messages[len(messages)-1]
+			GlobalSyncState.SetLatestMessageDate(latestMsg.CreatedAt)
+		}
+	}
+
+	GlobalSyncState.Update(totalMonths, totalMonths, "")
 	log.Printf("Mbox sync completed: %d new messages stored", totalStored)
 }
 
@@ -485,6 +471,27 @@ func monthsBetween(start, end time.Time) []yearMonth {
 		}
 	}
 	return out
+}
+
+// sanitizeUTF8 removes invalid UTF-8 sequences and replaces them with replacement character
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	// Build a new string with only valid UTF-8
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			// Invalid UTF-8 byte, skip it
+			i++
+			continue
+		}
+		b.WriteRune(r)
+		i += size
+	}
+	return b.String()
 }
 
 // storeMessagesInDB groups messages by subject, merges into existing threads by subject when present,
@@ -506,11 +513,17 @@ func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 				continue
 			}
 			threadID = uuid.New().String()
+			// Sanitize thread fields
+			sanitizedSubject := sanitizeUTF8(subject)
+			sanitizedMessageID := sanitizeUTF8(firstMsg.MessageID)
+			sanitizedAuthor := sanitizeUTF8(firstMsg.Author)
+			sanitizedAuthorEmail := sanitizeUTF8(firstMsg.AuthorEmail)
+
 			_, err = db.Exec(`
 				INSERT INTO threads (id, subject, first_message_id, first_author, first_author_email, created_at, last_message_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)
 				ON CONFLICT (id) DO NOTHING
-			`, threadID, subject, firstMsg.MessageID, firstMsg.Author, firstMsg.AuthorEmail, firstMsg.CreatedAt, firstMsg.CreatedAt)
+			`, threadID, sanitizedSubject, sanitizedMessageID, sanitizedAuthor, sanitizedAuthorEmail, firstMsg.CreatedAt, firstMsg.CreatedAt)
 			if err != nil {
 				log.Printf("Error inserting thread: %v", err)
 				continue
@@ -520,11 +533,19 @@ func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 		for _, msg := range msgs {
 			msg.ID = uuid.New().String()
 			msg.ThreadID = threadID
+
+			// Sanitize all text fields to ensure valid UTF-8
+			msg.Subject = sanitizeUTF8(msg.Subject)
+			msg.Author = sanitizeUTF8(msg.Author)
+			msg.AuthorEmail = sanitizeUTF8(msg.AuthorEmail)
+			msg.Body = sanitizeUTF8(msg.Body)
+			msg.MessageID = sanitizeUTF8(msg.MessageID)
+
 			result, err := db.Exec(`
-				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)
+				INSERT INTO messages (id, thread_id, message_id, subject, author, author_email, body, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				ON CONFLICT (message_id) DO UPDATE SET thread_id = EXCLUDED.thread_id
-			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.CreatedAt)
+			`, msg.ID, msg.ThreadID, msg.MessageID, msg.Subject, msg.Author, msg.AuthorEmail, msg.Body, msg.CreatedAt)
 			if err != nil {
 				log.Printf("Error inserting message: %v", err)
 				continue
@@ -551,6 +572,9 @@ func storeMessagesInDB(db *sql.DB, messages []*models.Message) int {
 			last_message_at = (SELECT MAX(created_at) FROM messages m WHERE m.thread_id = t.id),
 			updated_at = NOW()
 	`)
+
+	// Delete threads with no messages (orphaned threads)
+	_, _ = db.Exec(`DELETE FROM threads WHERE message_count = 0`)
 
 	// Reclassify all threads so status (in-progress, stalled, etc.) matches updated counts
 	rows, err := db.Query("SELECT id FROM threads")
