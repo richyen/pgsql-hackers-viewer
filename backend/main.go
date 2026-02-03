@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/joho/godotenv"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 	"github.com/pgsql-analyzer/backend/api"
 	"github.com/pgsql-analyzer/backend/config"
 	"github.com/pgsql-analyzer/backend/db"

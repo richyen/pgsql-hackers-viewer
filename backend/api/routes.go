@@ -515,10 +515,14 @@ func processMboxFile(db *sql.DB, cfg *config.Config, filePath string) {
 	log.Printf("Processing mbox file: %s", filePath)
 
 	mboxParser := parser.NewMboxParser(cfg.DataDir)
-	messages, err := mboxParser.ParseMboxFile(filePath)
+	messages, stats, err := mboxParser.ParseMboxFile(filePath)
 	if err != nil {
 		log.Printf("Error parsing mbox file: %v", err)
 		return
+	}
+
+	if stats != nil {
+		log.Printf("Parse stats: %d total, %d parsed, %d skipped", stats.Total, stats.Parsed, stats.Skipped)
 	}
 
 	storeMessagesInDB(db, messages)
@@ -608,10 +612,15 @@ func performMboxSync(db *sql.DB, cfg *config.Config) {
 
 		log.Printf("Processing %04d-%02d from %s (took %v)", result.Year, result.Month, result.Path, result.Duration)
 
-		messages, err := mboxParser.ParseMboxFile(result.Path)
+		messages, stats, err := mboxParser.ParseMboxFile(result.Path)
 		if err != nil {
 			log.Printf("Error parsing %s: %v", result.Path, err)
 			continue
+		}
+		if stats != nil {
+			log.Printf("Parse stats for %04d-%02d: %d total, %d parsed (%.1f%%), %d skipped",
+				result.Year, result.Month, stats.Total, stats.Parsed,
+				float64(stats.Parsed)/float64(stats.Total)*100, stats.Skipped)
 		}
 		log.Printf("Parsed %d messages from %s", len(messages), result.Path)
 		if len(messages) == 0 {

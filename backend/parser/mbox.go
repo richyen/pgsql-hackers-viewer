@@ -5,14 +5,27 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"mime/quotedprintable"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pgsql-analyzer/backend/models"
 )
+
+// ParseStats tracks statistics from parsing mbox files
+type ParseStats struct {
+	Total              int `json:"total"`
+	Parsed             int `json:"parsed"`
+	Skipped            int `json:"skipped"`
+	InvalidMessageID   int `json:"invalid_message_id"`
+	InvalidDate        int `json:"invalid_date"`
+	InvalidFrom        int `json:"invalid_from"`
+	MalformedMessageID int `json:"malformed_message_id"`
+}
 
 // MboxParser handles parsing mbox format files
 type MboxParser struct {
@@ -28,15 +41,55 @@ func NewMboxParser(dataDir string) *MboxParser {
 	}
 }
 
+// cleanMessageID validates and cleans a Message-ID header value
+// Returns cleaned Message-ID and error if invalid
+func cleanMessageID(msgid string) (string, error) {
+	// Remove leading/trailing whitespace and angle brackets
+	msgid = strings.Trim(strings.TrimSpace(msgid), "<>")
+
+	// Remove internal spaces (common issue in malformed Message-IDs)
+	msgid = strings.ReplaceAll(msgid, " ", "")
+	msgid = strings.ReplaceAll(msgid, "\t", "")
+
+	// Validate format
+	if msgid == "" {
+		return "", fmt.Errorf("empty message-id")
+	}
+
+	// Basic validation: should contain @ symbol
+	if !strings.Contains(msgid, "@") {
+		return "", fmt.Errorf("invalid message-id format (no @): %s", msgid)
+	}
+
+	return msgid, nil
+}
+
+// generateFallbackMessageID creates a unique Message-ID for messages with missing/broken IDs
+func generateFallbackMessageID() string {
+	return fmt.Sprintf("generated-%s@pgsql-analyzer.local", uuid.New().String())
+}
+
 // processHeader applies a parsed header to the message
-func processHeader(msg *models.Message, header, value string, contentTransferEncoding *string, contentType *string) {
+func processHeader(msg *models.Message, header, value string, contentTransferEncoding *string, contentType *string, stats *ParseStats) {
 	switch header {
 	case "message-id":
-		// Clean up message-id by removing angle brackets and whitespace
-		msg.MessageID = strings.Trim(strings.TrimSpace(value), "<>")
+		// Clean and validate message-id
+		cleaned, err := cleanMessageID(value)
+		if err != nil {
+			// Generate fallback Message-ID for broken headers
+			cleaned = generateFallbackMessageID()
+			log.Printf("WARNING: Generated Message-ID for malformed header '%s': %v", value, err)
+			if stats != nil {
+				stats.MalformedMessageID++
+			}
+		}
+		msg.MessageID = cleaned
 	case "in-reply-to":
 		// Clean up in-reply-to by removing angle brackets and whitespace
-		msg.InReplyTo = strings.Trim(strings.TrimSpace(value), "<>")
+		cleaned, _ := cleanMessageID(value)
+		if cleaned != "" {
+			msg.InReplyTo = cleaned
+		}
 	case "references":
 		// Store references as-is (will be parsed by parseReferences in threading code)
 		msg.RefersTo = value
@@ -53,14 +106,15 @@ func processHeader(msg *models.Message, header, value string, contentTransferEnc
 	}
 }
 
-// ParseMboxFile parses a single mbox file
-func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) {
+// ParseMboxFile parses a single mbox file and returns messages with statistics
+func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, *ParseStats, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open mbox file: %w", err)
+		return nil, nil, fmt.Errorf("failed to open mbox file: %w", err)
 	}
 	defer file.Close()
 
+	stats := &ParseStats{}
 	var messages []*models.Message
 	var currentMessage *models.Message
 	var messageBody strings.Builder
@@ -76,12 +130,14 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 		// Check for start of new message (mbox format: "From " at line start)
 		if strings.HasPrefix(line, "From ") {
+			stats.Total++
+
 			// Save any pending header
 			if lastHeader != "" && currentMessage != nil {
-				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType, stats)
 			}
 
-			// Save previous message if it exists
+			// Save previous message if it exists and passes validation
 			if currentMessage != nil {
 				currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding, contentType)
 				// Detect patches in message body
@@ -89,7 +145,25 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 				if currentMessage.HasPatch {
 					currentMessage.PatchStatus = detectPatchStatus(currentMessage.Body, currentMessage.Subject)
 				}
-				messages = append(messages, currentMessage)
+
+				// MANDATORY FIELD VALIDATION
+				if currentMessage.MessageID == "" {
+					log.Printf("SKIPPED: Message missing Message-ID (Subject: %s)", currentMessage.Subject)
+					stats.Skipped++
+					stats.InvalidMessageID++
+				} else if currentMessage.Author == "" && currentMessage.AuthorEmail == "" {
+					log.Printf("SKIPPED: Message %s missing From header", currentMessage.MessageID)
+					stats.Skipped++
+					stats.InvalidFrom++
+				} else if currentMessage.CreatedAt.IsZero() || currentMessage.CreatedAt.Year() < 1990 {
+					log.Printf("SKIPPED: Message %s has invalid date: %v", currentMessage.MessageID, currentMessage.CreatedAt)
+					stats.Skipped++
+					stats.InvalidDate++
+				} else {
+					// All validations passed
+					messages = append(messages, currentMessage)
+					stats.Parsed++
+				}
 			}
 
 			// Start new message
@@ -111,7 +185,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		if !inBody && strings.TrimSpace(line) == "" {
 			// Process any pending header before switching to body
 			if lastHeader != "" {
-				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType, stats)
 				lastHeader = ""
 				lastValue = ""
 			}
@@ -128,7 +202,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 			} else if strings.Contains(line, ": ") {
 				// New header - process previous one first
 				if lastHeader != "" {
-					processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
+					processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType, stats)
 				}
 
 				// Parse new header
@@ -145,7 +219,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		}
 	}
 
-	// Save last message
+	// Save last message with validation
 	if currentMessage != nil {
 		currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding, contentType)
 		// Detect patches in message body
@@ -153,14 +227,34 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		if currentMessage.HasPatch {
 			currentMessage.PatchStatus = detectPatchStatus(currentMessage.Body, currentMessage.Subject)
 		}
-		messages = append(messages, currentMessage)
+
+		// MANDATORY FIELD VALIDATION
+		if currentMessage.MessageID == "" {
+			log.Printf("SKIPPED: Last message missing Message-ID (Subject: %s)", currentMessage.Subject)
+			stats.Skipped++
+			stats.InvalidMessageID++
+		} else if currentMessage.Author == "" && currentMessage.AuthorEmail == "" {
+			log.Printf("SKIPPED: Message %s missing From header", currentMessage.MessageID)
+			stats.Skipped++
+			stats.InvalidFrom++
+		} else if currentMessage.CreatedAt.IsZero() || currentMessage.CreatedAt.Year() < 1990 {
+			log.Printf("SKIPPED: Message %s has invalid date: %v", currentMessage.MessageID, currentMessage.CreatedAt)
+			stats.Skipped++
+			stats.InvalidDate++
+		} else {
+			messages = append(messages, currentMessage)
+			stats.Parsed++
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading mbox file: %w", err)
+		return nil, stats, fmt.Errorf("error reading mbox file: %w", err)
 	}
 
-	return messages, nil
+	log.Printf("Parse complete: %d total, %d parsed, %d skipped (MessageID: %d, Date: %d, From: %d, Malformed: %d)",
+		stats.Total, stats.Parsed, stats.Skipped, stats.InvalidMessageID, stats.InvalidDate, stats.InvalidFrom, stats.MalformedMessageID)
+
+	return messages, stats, nil
 }
 
 // SaveMboxFile saves an mbox file to the data directory
@@ -197,24 +291,45 @@ func (mp *MboxParser) ListMboxFiles() ([]string, error) {
 }
 
 // ParseAllMboxFiles parses all mbox files in the data directory
-func (mp *MboxParser) ParseAllMboxFiles() ([]*models.Message, error) {
+func (mp *MboxParser) ParseAllMboxFiles() ([]*models.Message, *ParseStats, error) {
 	files, err := mp.ListMboxFiles()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	totalStats := &ParseStats{}
 	var allMessages []*models.Message
 	for _, filePath := range files {
-		messages, err := mp.ParseMboxFile(filePath)
+		log.Printf("Parsing file: %s", filePath)
+		messages, stats, err := mp.ParseMboxFile(filePath)
 		if err != nil {
 			// Log error but continue with other files
-			fmt.Printf("Error parsing %s: %v\n", filePath, err)
+			log.Printf("Error parsing %s: %v", filePath, err)
 			continue
+		}
+		// Aggregate stats
+		if stats != nil {
+			totalStats.Total += stats.Total
+			totalStats.Parsed += stats.Parsed
+			totalStats.Skipped += stats.Skipped
+			totalStats.InvalidMessageID += stats.InvalidMessageID
+			totalStats.InvalidDate += stats.InvalidDate
+			totalStats.InvalidFrom += stats.InvalidFrom
+			totalStats.MalformedMessageID += stats.MalformedMessageID
 		}
 		allMessages = append(allMessages, messages...)
 	}
 
-	return allMessages, nil
+	log.Printf("\n=== TOTAL PARSING STATS ===")
+	log.Printf("Total messages found: %d", totalStats.Total)
+	log.Printf("Successfully parsed: %d (%.1f%%)", totalStats.Parsed, float64(totalStats.Parsed)/float64(totalStats.Total)*100)
+	log.Printf("Skipped: %d (%.1f%%)", totalStats.Skipped, float64(totalStats.Skipped)/float64(totalStats.Total)*100)
+	log.Printf("  - Missing/Invalid Message-ID: %d", totalStats.InvalidMessageID)
+	log.Printf("  - Malformed Message-ID (fixed): %d", totalStats.MalformedMessageID)
+	log.Printf("  - Invalid Date: %d", totalStats.InvalidDate)
+	log.Printf("  - Missing From: %d", totalStats.InvalidFrom)
+
+	return allMessages, totalStats, nil
 }
 
 // normalizeSubject removes Re:, Fwd: prefixes from subject
