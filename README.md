@@ -1,4 +1,4 @@
-# PostgreSQL Mailing List Thread Analyzer
+# 💓 pgPulse
 
 A tool to parse and analyze the pgsql-hackers mailing list to identify which threads are actively being worked on versus those that are still under discussion or abandoned.
 
