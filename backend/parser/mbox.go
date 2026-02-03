@@ -267,7 +267,7 @@ func decodeMessageBody(body, encoding string) string {
 	body = strings.TrimSpace(body)
 
 	// Check if this is a multipart MIME message
-	if strings.Contains(body, "Content-Type:") && strings.Contains(body, "------") {
+	if strings.Contains(body, "Content-Type:") && strings.Contains(body, "boundary=") {
 		return decodeMimeMultipart(body)
 	}
 
@@ -307,32 +307,47 @@ func decodeMessageBody(body, encoding string) string {
 }
 
 // decodeMimeMultipart extracts and decodes text parts from a MIME multipart message
+// This function only extracts text/plain and text/html parts, skipping attachments
 func decodeMimeMultipart(body string) string {
+	// Extract boundary from message
+	boundary := extractBoundary(body)
+	if boundary == "" {
+		// No valid boundary found, return original
+		return body
+	}
+
 	var result strings.Builder
 	lines := strings.Split(body, "\n")
 
+	// Track whether we're inside a part
 	var inPart bool
 	var partEncoding string
 	var partContentType string
+	var isAttachment bool
 	var partBody strings.Builder
+	var headersDone bool
 
 	for _, line := range lines {
-		// Check for boundary markers
-		if strings.HasPrefix(line, "------") {
-			// Save previous part if it was text
-			if inPart && strings.Contains(partContentType, "text/") {
+		// Check if this is a boundary marker
+		if strings.HasPrefix(line, "--"+boundary) {
+			// Save previous part only if it was text and not an attachment
+			if inPart && strings.Contains(partContentType, "text/") && !isAttachment {
 				decoded := decodePartBody(partBody.String(), partEncoding)
-				if result.Len() > 0 {
+				if result.Len() > 0 && len(decoded) > 0 {
 					result.WriteString("\n\n---\n\n")
 				}
-				result.WriteString(decoded)
+				if len(decoded) > 0 {
+					result.WriteString(decoded)
+				}
 			}
 
 			// Reset for new part
 			inPart = true
 			partEncoding = ""
 			partContentType = ""
+			isAttachment = false
 			partBody.Reset()
+			headersDone = false
 			continue
 		}
 
@@ -340,31 +355,43 @@ func decodeMimeMultipart(body string) string {
 			continue
 		}
 
-		// Parse part headers
-		if strings.HasPrefix(line, "Content-Type:") {
-			partContentType = strings.ToLower(line)
-		} else if strings.HasPrefix(line, "Content-Transfer-Encoding:") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				partEncoding = strings.ToLower(strings.TrimSpace(parts[1]))
-			}
-		} else if strings.TrimSpace(line) == "" && partContentType != "" {
-			// Empty line after headers marks start of body
+		// Check if we've reached end of headers (empty line)
+		if !headersDone && strings.TrimSpace(line) == "" {
+			headersDone = true
 			continue
-		} else if partContentType != "" {
-			// Part body content
+		}
+
+		// Parse part headers (before empty line)
+		if !headersDone {
+			lineLower := strings.ToLower(line)
+			if strings.HasPrefix(lineLower, "content-type:") {
+				partContentType = lineLower
+			} else if strings.HasPrefix(lineLower, "content-transfer-encoding:") {
+				parts := strings.SplitN(line, ":", 2)
+				if len(parts) == 2 {
+					partEncoding = strings.ToLower(strings.TrimSpace(parts[1]))
+				}
+			} else if strings.HasPrefix(lineLower, "content-disposition:") && strings.Contains(lineLower, "attachment") {
+				// Mark this part as an attachment to skip it
+				isAttachment = true
+			}
+		} else if headersDone && strings.Contains(partContentType, "text/") && !isAttachment {
+			// Only collect body content for text parts that are not attachments
 			partBody.WriteString(line)
 			partBody.WriteString("\n")
 		}
+		// Skip collecting body for non-text parts and attachments
 	}
 
-	// Save last part
-	if inPart && strings.Contains(partContentType, "text/") {
+	// Save last part only if it was text and not an attachment
+	if inPart && strings.Contains(partContentType, "text/") && !isAttachment {
 		decoded := decodePartBody(partBody.String(), partEncoding)
-		if result.Len() > 0 {
+		if result.Len() > 0 && len(decoded) > 0 {
 			result.WriteString("\n\n---\n\n")
 		}
-		result.WriteString(decoded)
+		if len(decoded) > 0 {
+			result.WriteString(decoded)
+		}
 	}
 
 	if result.Len() > 0 {
@@ -373,6 +400,38 @@ func decodeMimeMultipart(body string) string {
 
 	// If no text parts found, return original
 	return body
+}
+
+// extractBoundary extracts the MIME boundary from Content-Type header
+func extractBoundary(body string) string {
+	lines := strings.Split(body, "\n")
+	for _, line := range lines {
+		lineLower := strings.ToLower(line)
+		if strings.Contains(lineLower, "boundary=") {
+			// Extract boundary value
+			// Format: boundary="value" or boundary=value
+			idx := strings.Index(lineLower, "boundary=")
+			if idx >= 0 {
+				value := line[idx+9:] // Skip "boundary="
+				value = strings.TrimSpace(value)
+
+				// Remove quotes if present
+				value = strings.Trim(value, "\"")
+				value = strings.Trim(value, "'")
+
+				// Take only up to next semicolon or newline
+				if idx := strings.IndexAny(value, ";\n\r"); idx >= 0 {
+					value = value[:idx]
+				}
+
+				value = strings.TrimSpace(value)
+				if len(value) > 0 {
+					return value
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // decodePartBody decodes a MIME part body based on its encoding

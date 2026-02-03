@@ -105,15 +105,18 @@ func getThreadsHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		if search != "" {
-			query += " AND LOWER(subject) LIKE LOWER($" + fmt.Sprintf("%d", argCount) + ")"
+			// Search by message_id first (exact match), then by subject (substring match)
+			// Message-ID exact match takes priority
+			query += " AND (id IN (SELECT DISTINCT thread_id FROM messages WHERE message_id = $" + fmt.Sprintf("%d", argCount) + ") OR LOWER(subject) LIKE LOWER($" + fmt.Sprintf("%d", argCount+1) + "))"
+			args = append(args, search)
 			args = append(args, "%"+search+"%")
-			argCount++
+			argCount += 2
 		}
 
 		query += " ORDER BY last_message_at DESC LIMIT $" + fmt.Sprintf("%d", argCount)
 		args = append(args, limit)
 		argCount++
-		
+
 		query += " OFFSET $" + fmt.Sprintf("%d", argCount)
 		args = append(args, offset)
 
@@ -351,35 +354,45 @@ func findThreadRootRFC5256(msg *models.Message, messageMap map[string]*models.Me
 		return msg.MessageID
 	}
 
-	// Find the oldest message in the reference chain that we have
-	// or use the first reference as the root
+	// The first reference in the chain is the real root (or the oldest missing message).
+	// Even if that message doesn't exist in our dataset, we should use it as the thread root
+	// to ensure all messages referencing it get grouped together.
+	// This is important for handling threads with missing intermediate messages.
+
+	// Traverse the reference chain to find the root (first/oldest reference)
+	currentRefID := ""
 	for _, refID := range refs {
 		// Clean up the reference ID
 		refID = strings.Trim(strings.TrimSpace(refID), "<>")
 		if refID == "" {
 			continue
 		}
-
-		// Check if we already know the root for this reference
-		if root, exists := messageToRoot[refID]; exists {
-			return root
-		}
-
-		// Check if this reference exists in our message set
-		if refMsg, exists := messageMap[refID]; exists {
-			// Recursively find the root of this reference
-			root := findThreadRootRFC5256(refMsg, messageMap, messageToRoot)
-			messageToRoot[refID] = root
-			return root
-		}
-
-		// Reference doesn't exist in our set, use the first reference as root
-		// This handles missing intermediate messages
-		return refID
+		currentRefID = refID
+		break // The first valid reference is our candidate root
 	}
 
-	// Fallback: use the message itself as root
-	return msg.MessageID
+	if currentRefID == "" {
+		// No valid references found, this message is a root
+		return msg.MessageID
+	}
+
+	// Check if we already know the root for the first reference
+	if root, exists := messageToRoot[currentRefID]; exists {
+		return root
+	}
+
+	// Check if the first reference exists in our message set
+	if refMsg, exists := messageMap[currentRefID]; exists {
+		// Recursively find the root of this reference
+		root := findThreadRootRFC5256(refMsg, messageMap, messageToRoot)
+		messageToRoot[currentRefID] = root
+		return root
+	}
+
+	// First reference doesn't exist in our dataset, but we use it as the thread root anyway
+	// This ensures all messages that reference it get grouped together,
+	// even if the message itself is missing from our archives
+	return currentRefID
 }
 
 // parseReferences extracts individual message IDs from a References header

@@ -26,11 +26,11 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   return (
     <div className={styles.container}>
       <div className={styles.searchSection}>
-        <h3>Search by Subject</h3>
+        <h3>Search</h3>
         <input
           type="text"
           className={styles.searchInput}
-          placeholder="Search threads by subject..."
+          placeholder="Search by subject or Message-ID..."
           value={searchTerm}
           onChange={(e) => onSearchChange(e.target.value)}
         />

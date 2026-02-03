@@ -169,8 +169,9 @@ function App() {
         return;
       }
 
-      // First, try client-side filtering
+      // First, try client-side filtering (exact Message-ID match on first_message_id, then subject)
       const filtered = allThreads.filter(thread =>
+        thread.first_message_id === searchTerm.trim() || 
         thread.subject.toLowerCase().includes(searchTerm.toLowerCase())
       );
 
