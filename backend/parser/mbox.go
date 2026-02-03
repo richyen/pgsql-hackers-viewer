@@ -29,7 +29,7 @@ func NewMboxParser(dataDir string) *MboxParser {
 }
 
 // processHeader applies a parsed header to the message
-func processHeader(msg *models.Message, header, value string, contentTransferEncoding *string) {
+func processHeader(msg *models.Message, header, value string, contentTransferEncoding *string, contentType *string) {
 	switch header {
 	case "message-id":
 		// Clean up message-id by removing angle brackets and whitespace
@@ -48,6 +48,8 @@ func processHeader(msg *models.Message, header, value string, contentTransferEnc
 		msg.CreatedAt = parseDate(value)
 	case "content-transfer-encoding":
 		*contentTransferEncoding = strings.ToLower(strings.TrimSpace(value))
+	case "content-type":
+		*contentType = value
 	}
 }
 
@@ -63,6 +65,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 	var currentMessage *models.Message
 	var messageBody strings.Builder
 	var contentTransferEncoding string
+	var contentType string
 	inBody := false // Track if we've finished headers and are in body
 	var lastHeader string
 	var lastValue string
@@ -75,12 +78,17 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		if strings.HasPrefix(line, "From ") {
 			// Save any pending header
 			if lastHeader != "" && currentMessage != nil {
-				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
 			}
 
 			// Save previous message if it exists
 			if currentMessage != nil {
-				currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding)
+				currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding, contentType)
+				// Detect patches in message body
+				currentMessage.HasPatch = detectPatch(currentMessage.Body, currentMessage.Subject)
+				if currentMessage.HasPatch {
+					currentMessage.PatchStatus = detectPatchStatus(currentMessage.Body, currentMessage.Subject)
+				}
 				messages = append(messages, currentMessage)
 			}
 
@@ -88,6 +96,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 			currentMessage = &models.Message{}
 			messageBody.Reset()
 			contentTransferEncoding = ""
+			contentType = ""
 			inBody = false
 			lastHeader = ""
 			lastValue = ""
@@ -102,7 +111,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 		if !inBody && strings.TrimSpace(line) == "" {
 			// Process any pending header before switching to body
 			if lastHeader != "" {
-				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+				processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
 				lastHeader = ""
 				lastValue = ""
 			}
@@ -119,7 +128,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 			} else if strings.Contains(line, ": ") {
 				// New header - process previous one first
 				if lastHeader != "" {
-					processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding)
+					processHeader(currentMessage, lastHeader, lastValue, &contentTransferEncoding, &contentType)
 				}
 
 				// Parse new header
@@ -138,7 +147,7 @@ func (mp *MboxParser) ParseMboxFile(filePath string) ([]*models.Message, error) 
 
 	// Save last message
 	if currentMessage != nil {
-		currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding)
+		currentMessage.Body = decodeMessageBody(messageBody.String(), contentTransferEncoding, contentType)
 		// Detect patches in message body
 		currentMessage.HasPatch = detectPatch(currentMessage.Body, currentMessage.Subject)
 		if currentMessage.HasPatch {
@@ -177,8 +186,10 @@ func (mp *MboxParser) ListMboxFiles() ([]string, error) {
 
 	var files []string
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".mbox") {
-			files = append(files, filepath.Join(mp.dataDir, entry.Name()))
+		name := entry.Name()
+		// Match files ending in .mbox or starting with pgsql-hackers
+		if !entry.IsDir() && (strings.HasSuffix(name, ".mbox") || strings.HasPrefix(name, "pgsql-hackers")) {
+			files = append(files, filepath.Join(mp.dataDir, name))
 		}
 	}
 
@@ -263,12 +274,12 @@ func parseDate(dateStr string) time.Time {
 
 // decodeMessageBody decodes the message body based on Content-Transfer-Encoding
 // Also handles MIME multipart messages by extracting and decoding each part
-func decodeMessageBody(body, encoding string) string {
+func decodeMessageBody(body, encoding, contentType string) string {
 	body = strings.TrimSpace(body)
 
 	// Check if this is a multipart MIME message
-	if strings.Contains(body, "Content-Type:") && strings.Contains(body, "boundary=") {
-		return decodeMimeMultipart(body)
+	if strings.Contains(strings.ToLower(contentType), "multipart") && strings.Contains(contentType, "boundary=") {
+		return decodeMimeMultipart(body, contentType)
 	}
 
 	switch encoding {
@@ -308,9 +319,9 @@ func decodeMessageBody(body, encoding string) string {
 
 // decodeMimeMultipart extracts and decodes text parts from a MIME multipart message
 // This function only extracts text/plain and text/html parts, skipping attachments
-func decodeMimeMultipart(body string) string {
-	// Extract boundary from message
-	boundary := extractBoundary(body)
+func decodeMimeMultipart(body, contentType string) string {
+	// Extract boundary from Content-Type header
+	boundary := extractBoundary(contentType)
 	if boundary == "" {
 		// No valid boundary found, return original
 		return body
