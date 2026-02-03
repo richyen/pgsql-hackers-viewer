@@ -1,9 +1,15 @@
-# Development mode - mount source and run dev server
-FROM node:18-alpine
+# Build stage
+FROM node:18-alpine AS builder
 WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm install --legacy-peer-deps
-# Set up git for husky (if running git commands in container)
-RUN apk add --no-cache git
+COPY frontend/ .
+RUN npm run build
+
+# Runtime stage
+FROM node:18-alpine
+WORKDIR /app
+RUN npm install -g serve
+COPY --from=builder /app/build ./build
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["serve", "-s", "build", "-l", "3000"]
